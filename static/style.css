@@ -163,13 +163,13 @@ a {
   background: var(--border);
 }
 
-.genre-tab {
+.platform-filter-tab {
   font-size: 12px;
   padding: 6px 12px;
   color: var(--text-dim);
   background: transparent;
 }
-.genre-tab.active {
+.platform-filter-tab.active {
   background: rgba(41, 209, 127, 0.15);
   border-color: var(--accent);
   color: var(--accent);

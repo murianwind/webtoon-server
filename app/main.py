@@ -209,7 +209,6 @@ def list_series():
             last_label = _chapter_number_part(chapters[-1]["label"])
             progress_display = f"{current_label}/{last_label}"
 
-        info = series.get("info")
         result.append(
             {
                 "id": series["id"],
@@ -220,7 +219,6 @@ def list_series():
                 "progress_display": progress_display,
                 "latest_update": series["latest_mtime"],
                 "cover_url": f"/api/series/{series['id']}/cover",
-                "genres": info["genres"] if info else [],
             }
         )
     result.sort(key=lambda item: (item["platform"], item["title"]))

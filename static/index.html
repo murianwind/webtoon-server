@@ -94,7 +94,7 @@ let allSeries = [];
 let query = localStorage.getItem(LS_QUERY) || "";
 let sortMode = localStorage.getItem(LS_SORT) || "latest";
 let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로드되기 전까지의 기본값)
-let selectedGenre = null; // info.xml이 있는 시리즈에서 뽑은 장르 태그 (한 번에 하나만)
+let selectedPlatform = null; // docker-compose volumes에서 정한 플랫폼 태그(네이버/카카오 등), 한 번에 하나만
 
 let selectedIds = new Set(); // 다중 선택
 let actionMode = null; // null | "chapter-read" | "chapter-unread"
@@ -159,22 +159,21 @@ function renderFilterTabs() {
     container.appendChild(btn);
   }
 
-  // info.xml에 장르가 있는 시리즈들에서 뽑은 태그 - 지금 로드된 시리즈 목록 기준으로 매번 새로 구성
-  const genreSet = new Set();
-  for (const s of allSeries) {
-    for (const g of s.genres || []) genreSet.add(g);
-  }
-  if (genreSet.size > 0) {
+  // docker-compose volumes에서 정한 플랫폼 태그(네이버/카카오 등) - 지금 로드된
+  // 시리즈 목록 기준으로 실제 쓰이고 있는 플랫폼만 매번 새로 구성
+  const platformSet = new Set();
+  for (const s of allSeries) platformSet.add(s.platform);
+  if (platformSet.size > 1) {
     const divider = document.createElement("span");
     divider.className = "filter-tab-divider";
     container.appendChild(divider);
 
-    for (const genre of [...genreSet].sort((a, b) => a.localeCompare(b, "ko"))) {
+    for (const platform of [...platformSet].sort((a, b) => a.localeCompare(b, "ko"))) {
       const btn = document.createElement("button");
-      btn.className = "filter-tab genre-tab" + (selectedGenre === genre ? " active" : "");
-      btn.textContent = genre;
+      btn.className = "filter-tab platform-filter-tab" + (selectedPlatform === platform ? " active" : "");
+      btn.textContent = platform;
       btn.addEventListener("click", () => {
-        selectedGenre = selectedGenre === genre ? null : genre;
+        selectedPlatform = selectedPlatform === platform ? null : platform;
         renderFilterTabs();
         render();
       });
@@ -190,15 +189,15 @@ function render() {
   if (selectedStatuses.size > 0) {
     filtered = filtered.filter((s) => selectedStatuses.has(seriesStatus(s)));
   }
-  if (selectedGenre) {
-    filtered = filtered.filter((s) => (s.genres || []).includes(selectedGenre));
+  if (selectedPlatform) {
+    filtered = filtered.filter((s) => s.platform === selectedPlatform);
   }
   const list = sortSeries(filtered);
 
   if (!list.length) {
     const msg = q
       ? "검색 결과가 없습니다."
-      : selectedStatuses.size > 0 || selectedGenre
+      : selectedStatuses.size > 0 || selectedPlatform
       ? "해당하는 웹툰이 없습니다."
       : "스캔된 웹툰이 없습니다.<br>라이브러리 폴더를 확인해주세요.";
     grid.innerHTML = `<div class="empty-state">${msg}</div>`;
