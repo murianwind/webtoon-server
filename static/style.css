@@ -608,7 +608,14 @@ a {
   position: fixed;
 }
 
-.reader-fullscreen .pages img,
+.reader-fullscreen .pages img {
+  /* 전체 화면에서도 원본보다 크게 확대하지 않는다.
+     화면보다 큰 이미지만 뷰포트 폭에 맞춰 축소한다. */
+  width: auto;
+  max-width: 100vw;
+  height: auto;
+}
+
 .reader-fullscreen .pages .page-placeholder {
   max-width: 100vw;
 }
