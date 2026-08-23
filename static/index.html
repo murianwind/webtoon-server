@@ -616,6 +616,31 @@ const chapterSidebarOverlay = document.getElementById("chapterSidebarOverlay");
 const chapterSidebarList = document.getElementById("chapterSidebarList");
 const chapterSidebarTitle = document.getElementById("chapterSidebarTitle");
 
+function positionChapterSidebarList(chapters) {
+  if (!Array.isArray(chapters) || chapters.length === 0) return;
+
+  // DOM 렌더링이 끝난 다음 실제 높이를 계산해야 정확한 스크롤 위치를 잡을 수 있음.
+  requestAnimationFrame(() => {
+    const container = chapterSidebarList;
+    const rows = [...container.querySelectorAll(".sidebar-row")];
+    if (!rows.length || container.scrollHeight <= container.clientHeight) return;
+
+    const isCompleted = chapters.every((ch) => ch.read);
+    if (isCompleted) {
+      // 완독한 웹툰은 목록의 마지막 회차가 화면에 보이도록 끝으로 이동.
+      rows[rows.length - 1].scrollIntoView({ block: "end", behavior: "auto" });
+      return;
+    }
+
+    // /chapters API의 reading 상태를 현재 읽고 있는 회차로 사용.
+    const currentChapter = chapters.find((ch) => ch.reading);
+    if (!currentChapter) return;
+
+    const target = rows.find((row) => row.dataset.chapterId === currentChapter.id);
+    if (target) target.scrollIntoView({ block: "center", behavior: "auto" });
+  });
+}
+
 async function openChapterSidebar(series) {
   chapterSidebarTitle.textContent = series.title;
   chapterSidebarList.innerHTML = `<div class="picker-loading">불러오는 중...</div>`;
@@ -638,6 +663,7 @@ async function openChapterSidebar(series) {
   for (const ch of data.chapters) {
     const row = document.createElement("div");
     row.className = "sidebar-row";
+    row.dataset.chapterId = ch.id;
     const statusText = ch.read ? "읽음" : ch.reading ? "읽는 중" : "";
     const statusClass = ch.read ? "read" : ch.reading ? "reading" : "";
     row.innerHTML = `
@@ -649,6 +675,8 @@ async function openChapterSidebar(series) {
     });
     chapterSidebarList.appendChild(row);
   }
+
+  positionChapterSidebarList(data.chapters);
 }
 
 const chapterSidebarInfo = document.getElementById("chapterSidebarInfo");
