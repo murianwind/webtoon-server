@@ -582,6 +582,37 @@ a {
   background: rgba(255, 255, 255, 0.16);
 }
 
+.reader-control {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+}
+.reader-control:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.reader-fullscreen .reader-topbar {
+  /* 브라우저 전체 화면이 지원되지 않는 환경에서도 리더 자체가
+     화면 전체를 사용하는 상태로 자동 복원되도록 함 */
+  position: fixed;
+}
+
+.reader-fullscreen .pages img,
+.reader-fullscreen .pages .page-placeholder {
+  max-width: 100vw;
+}
+
 .pages {
   display: flex;
   flex-direction: column;

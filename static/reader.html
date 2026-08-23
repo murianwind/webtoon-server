@@ -17,7 +17,22 @@
 <header class="reader-topbar" id="topbar">
   <a class="back" id="backLink" href="/">←</a>
   <span id="chapterTitle"></span>
-  <button class="sidebar-toggle" id="sidebarToggle" aria-label="회차 목록">≡</button>
+  <button class="sidebar-toggle" id="sidebarToggle" aria-label="회차 목록" title="회차 목록">≡</button>
+  <button class="reader-control" id="fullscreenToggle" aria-label="전체 화면" title="전체 화면">
+    <svg id="fullscreenEnterIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <polyline points="8 3 3 3 3 8"></polyline>
+      <polyline points="16 3 21 3 21 8"></polyline>
+      <polyline points="8 21 3 21 3 16"></polyline>
+      <polyline points="16 21 21 21 21 16"></polyline>
+    </svg>
+    <svg id="fullscreenExitIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+      <polyline points="9 3 9 9 3 9"></polyline>
+      <polyline points="15 3 15 9 21 9"></polyline>
+      <polyline points="9 21 9 15 3 15"></polyline>
+      <polyline points="15 21 15 15 21 15"></polyline>
+    </svg>
+  </button>
+  <button class="reader-control speed-control" id="scrollSpeedToggle" aria-label="스크롤 속도" title="스크롤 속도">1x</button>
 </header>
 
 <div id="pages" class="pages"></div>
@@ -47,9 +62,24 @@ let currentPageIndex = 0;
 let isLoadingNext = false;
 let saveTimer = null;
 
+// 리더 화면별 UI 설정. 전체 화면 상태는 웹툰(seriesId) 단위로 저장한다.
+const FULLSCREEN_SETTING_PREFIX = "reader_fullscreen:";
+const SCROLL_SPEED_SETTING_KEY = "reader_scroll_speed";
+const SCROLL_SPEEDS = [0.5, 1, 1.5, 2, 3];
+const DEFAULT_SCROLL_SPEED = 1;
+const SCROLL_PIXELS_PER_SECOND = 650;
+let scrollSpeed = DEFAULT_SCROLL_SPEED;
+let scrollAnimationFrame = null;
+let scrollDirection = 0;
+let fullscreenPreference = false;
+
 const pagesEl = document.getElementById("pages");
 const chapterTitleEl = document.getElementById("chapterTitle");
 const sidebarListEl = document.getElementById("sidebarList");
+const fullscreenToggleEl = document.getElementById("fullscreenToggle");
+const fullscreenEnterIconEl = document.getElementById("fullscreenEnterIcon");
+const fullscreenExitIconEl = document.getElementById("fullscreenExitIcon");
+const scrollSpeedToggleEl = document.getElementById("scrollSpeedToggle");
 
 function showError() {
   pagesEl.innerHTML = `<div class="empty-state">회차를 불러올 수 없습니다.</div>`;
@@ -76,6 +106,196 @@ function chapterById(id) {
 function chapterIndexById(id) {
   return seriesData.chapters.findIndex((c) => c.id === id);
 }
+
+// ---------------------------------------------------------------------
+// 리더 화면 설정: 회차별 전체 화면 + 연속 스크롤
+// ---------------------------------------------------------------------
+
+function fullscreenSettingKey() {
+  return `${FULLSCREEN_SETTING_PREFIX}${seriesId}`;
+}
+
+async function readFullscreenPreference() {
+  // 서버 설정을 우선 사용하되, 서버에 값이 없거나 요청에 실패하면
+  // 기존 브라우저의 localStorage 값도 사용할 수 있게 한다.
+  const localValue = localStorage.getItem(fullscreenSettingKey());
+  if (localValue !== null) fullscreenPreference = localValue === "1";
+
+  try {
+    const res = await fetch(`/api/settings/${encodeURIComponent(fullscreenSettingKey())}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.value === "1" || data.value === "0") {
+        fullscreenPreference = data.value === "1";
+        localStorage.setItem(fullscreenSettingKey(), data.value);
+      }
+    }
+  } catch (e) {
+    // 서버 설정을 읽지 못해도 로컬 설정으로 계속 사용할 수 있다.
+  }
+}
+
+async function writeFullscreenPreference(enabled) {
+  fullscreenPreference = enabled;
+  localStorage.setItem(fullscreenSettingKey(), enabled ? "1" : "0");
+  try {
+    await fetch(`/api/settings/${encodeURIComponent(fullscreenSettingKey())}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: enabled ? "1" : "0" }),
+    });
+  } catch (e) {
+    // 로컬 저장은 이미 끝났으므로 서버 저장 실패가 리더 사용을 막지 않게 한다.
+  }
+}
+
+function updateFullscreenButton() {
+  const active = document.body.classList.contains("reader-fullscreen");
+  fullscreenEnterIconEl.style.display = active ? "none" : "block";
+  fullscreenExitIconEl.style.display = active ? "block" : "none";
+  fullscreenToggleEl.setAttribute("aria-label", active ? "전체 화면 해제" : "전체 화면");
+  fullscreenToggleEl.title = active ? "전체 화면 해제" : "전체 화면";
+}
+
+async function enterBrowserFullscreen() {
+  if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch (e) {
+      // 브라우저 보안 정책상 사용자 제스처가 필요한 경우가 있으므로
+      // 아래의 앱 전체 화면 모드는 그대로 유지한다.
+    }
+  }
+}
+
+async function exitBrowserFullscreen() {
+  if (document.fullscreenElement && document.exitFullscreen) {
+    try {
+      await document.exitFullscreen();
+    } catch (e) {}
+  }
+}
+
+function setReaderFullscreen(enabled, { persist = true, requestBrowserFullscreen = false } = {}) {
+  document.body.classList.toggle("reader-fullscreen", enabled);
+  if (persist) writeFullscreenPreference(enabled);
+  updateFullscreenButton();
+
+  if (enabled && requestBrowserFullscreen) {
+    enterBrowserFullscreen();
+  } else if (!enabled) {
+    exitBrowserFullscreen();
+  }
+}
+
+fullscreenToggleEl.addEventListener("click", () => {
+  const enabled = !document.body.classList.contains("reader-fullscreen");
+  setReaderFullscreen(enabled, { persist: true, requestBrowserFullscreen: enabled });
+});
+
+document.addEventListener("fullscreenchange", () => {
+  // Esc 등으로 브라우저 전체 화면을 빠져나와도 사용자가 저장한
+  // 웹툰별 전체 화면 선호 상태는 유지한다. 따라서 다음 진입 때 다시 적용한다.
+  updateFullscreenButton();
+});
+
+async function leaveReaderForList(event) {
+  if (event) event.preventDefault();
+  // 웹툰 목록으로 돌아갈 때는 브라우저 전체 화면과 리더 전체 화면을 모두 해제한다.
+  document.body.classList.remove("reader-fullscreen");
+  await exitBrowserFullscreen();
+  updateFullscreenButton();
+  window.location.href = "/";
+}
+
+document.getElementById("backLink").addEventListener("click", leaveReaderForList);
+
+function loadScrollSpeed() {
+  const stored = parseFloat(localStorage.getItem(SCROLL_SPEED_SETTING_KEY) || "");
+  if (SCROLL_SPEEDS.includes(stored)) scrollSpeed = stored;
+  scrollSpeedToggleEl.textContent = `${scrollSpeed}x`;
+}
+
+function saveScrollSpeed() {
+  localStorage.setItem(SCROLL_SPEED_SETTING_KEY, String(scrollSpeed));
+}
+
+function cycleScrollSpeed() {
+  const index = SCROLL_SPEEDS.indexOf(scrollSpeed);
+  scrollSpeed = SCROLL_SPEEDS[(index + 1) % SCROLL_SPEEDS.length];
+  scrollSpeedToggleEl.textContent = `${scrollSpeed}x`;
+  scrollSpeedToggleEl.title = `스크롤 속도 ${scrollSpeed}x (클릭하여 변경)`;
+  saveScrollSpeed();
+}
+
+scrollSpeedToggleEl.addEventListener("click", (event) => {
+  event.stopPropagation();
+  cycleScrollSpeed();
+});
+
+function stopContinuousScroll() {
+  scrollDirection = 0;
+  if (scrollAnimationFrame !== null) {
+    cancelAnimationFrame(scrollAnimationFrame);
+    scrollAnimationFrame = null;
+  }
+}
+
+function startContinuousScroll(direction) {
+  if (scrollDirection === direction && scrollAnimationFrame !== null) return;
+  scrollDirection = direction;
+  let lastTime = performance.now();
+
+  const step = (now) => {
+    if (scrollDirection !== direction) {
+      scrollAnimationFrame = null;
+      return;
+    }
+    const elapsed = Math.min(now - lastTime, 50) / 1000;
+    lastTime = now;
+    window.scrollBy(0, direction * SCROLL_PIXELS_PER_SECOND * scrollSpeed * elapsed);
+    scrollAnimationFrame = requestAnimationFrame(step);
+  };
+
+  if (scrollAnimationFrame !== null) cancelAnimationFrame(scrollAnimationFrame);
+  scrollAnimationFrame = requestAnimationFrame(step);
+}
+
+function scrollOnce(direction) {
+  stopContinuousScroll();
+  window.scrollBy(0, direction * Math.max(window.innerHeight * 0.85, 300));
+}
+
+function handleScrollKeyDown(event) {
+  const tag = event.target && event.target.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+
+  let direction = 0;
+  if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "AudioVolumeDown") direction = -1;
+  if (event.key === "ArrowDown" || event.key === "PageDown" || event.key === "AudioVolumeUp") direction = 1;
+  if (!direction) return;
+
+  event.preventDefault();
+  startContinuousScroll(direction);
+}
+
+function handleScrollKeyUp(event) {
+  if (
+    event.key === "ArrowUp" || event.key === "PageUp" || event.key === "AudioVolumeDown" ||
+    event.key === "ArrowDown" || event.key === "PageDown" || event.key === "AudioVolumeUp"
+  ) {
+    event.preventDefault();
+    stopContinuousScroll();
+  }
+}
+
+window.addEventListener("keydown", handleScrollKeyDown, { passive: false });
+window.addEventListener("keyup", handleScrollKeyUp, { passive: false });
+window.addEventListener("blur", stopContinuousScroll);
+
+loadScrollSpeed();
 
 // ---------------------------------------------------------------------
 // 회차 로딩 (무한 스크롤)
@@ -421,6 +641,13 @@ window.addEventListener(
 );
 
 pagesEl.addEventListener("click", (e) => {
+  const link = e.target.closest("a");
+  if (link && link.getAttribute("href") === "/") {
+    // 마지막 화의 "웹툰 목록으로" 링크로 나갈 때도 전체 화면을 확실히 해제한다.
+    e.preventDefault();
+    leaveReaderForList(e);
+    return;
+  }
   // 링크(다음 화 카드 등) 클릭은 그대로 이동하도록 두고 토글만 별도로 처리
   topbar.classList.toggle("hidden");
 });
@@ -431,6 +658,15 @@ pagesEl.addEventListener("click", (e) => {
 
 async function load() {
   if (!seriesId || !initialChapterId) return showError();
+
+  await readFullscreenPreference();
+  if (fullscreenPreference) {
+    // CSS 기반 리더 전체 화면은 자동 적용할 수 있다. 브라우저의 실제 전체 화면 API는
+    // 보안상 사용자 제스처가 필요할 수 있으므로, 여기서는 가능한 경우에만 시도한다.
+    setReaderFullscreen(true, { persist: false, requestBrowserFullscreen: true });
+  } else {
+    updateFullscreenButton();
+  }
 
   const res = await fetch(`/api/series/${encodeURIComponent(seriesId)}/chapters`);
   if (!res.ok) return showError();
