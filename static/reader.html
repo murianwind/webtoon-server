@@ -350,16 +350,76 @@ function onPositionChange() {
   scheduleSaveProgress();
 }
 
+function saveProgressNow({ keepalive = false } = {}) {
+  if (!currentChapterId) return;
+
+  clearTimeout(saveTimer);
+  saveTimer = null;
+
+  const chapterId = currentChapterId;
+  const pageIndex = currentPageIndex;
+  return fetch(`/api/series/${encodeURIComponent(seriesId)}/progress`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chapter_id: chapterId, page_index: pageIndex }),
+    keepalive,
+  }).catch(() => {});
+}
+
 function scheduleSaveProgress() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    fetch(`/api/series/${encodeURIComponent(seriesId)}/progress`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chapter_id: currentChapterId, page_index: currentPageIndex }),
-    }).catch(() => {});
+    saveTimer = null;
+    saveProgressNow();
   }, 1200);
 }
+
+// 마지막 회차에는 다음 회차 진입 이벤트가 없으므로, 실제 문서의 끝에
+// 도달했을 때 마지막 이미지까지 읽은 것으로 한 번 더 확정한다.
+// 기존 IntersectionObserver 기반 페이지 판정은 그대로 유지하고,
+// 문서 끝에서만 누락 가능성을 보완한다.
+let endOfDocumentCheckQueued = false;
+function confirmLastChapterAtDocumentEnd() {
+  if (endOfDocumentCheckQueued) return;
+  endOfDocumentCheckQueued = true;
+  requestAnimationFrame(() => {
+    endOfDocumentCheckQueued = false;
+
+    if (!seriesData || !currentChapterId) return;
+    if (currentChapterId !== seriesData.chapters[seriesData.chapters.length - 1]?.id) return;
+
+    const bottomGap = document.documentElement.scrollHeight - (window.scrollY + window.innerHeight);
+    if (bottomGap > 24) return;
+
+    const lastChapter = seriesData.chapters[seriesData.chapters.length - 1];
+    const lastImage = pagesEl.querySelector(`img[data-chapter="${CSS.escape(lastChapter.id)}"]:last-of-type`);
+    if (!lastImage) return;
+
+    const lastPageIndex = parseInt(lastImage.dataset.page, 10);
+    if (!Number.isFinite(lastPageIndex)) return;
+
+    const changed = currentChapterId !== lastChapter.id || currentPageIndex !== lastPageIndex;
+    currentChapterId = lastChapter.id;
+    currentPageIndex = lastPageIndex;
+    if (changed) {
+      const ch = chapterById(currentChapterId);
+      chapterTitleEl.textContent = ch ? `${seriesData.title} · ${ch.label}` : seriesData.title;
+      highlightSidebar();
+      updateUrlState(currentChapterId, currentPageIndex);
+    }
+
+    // 마지막 회차의 마지막 페이지에 도달한 순간에는 debounce를 기다리지 않고
+    // 즉시 저장한다. 서버의 기존 마지막 회차 read_chapters 판정은 그대로 사용한다.
+    saveProgressNow({ keepalive: true });
+  });
+}
+
+window.addEventListener("scroll", confirmLastChapterAtDocumentEnd, { passive: true });
+window.addEventListener("pagehide", () => {
+  // 목록 이동/뒤로가기 등으로 reader가 종료되기 전에 남아 있는 진행률을
+  // 기존 저장 API로 즉시 한 번 전송한다. 서버/DB 구조는 변경하지 않는다.
+  saveProgressNow({ keepalive: true });
+});
 
 // ---------------------------------------------------------------------
 // 프리페치 (다음 화 이미지를 미리 브라우저 캐시에 받아둠)
