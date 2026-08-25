@@ -573,10 +573,25 @@ a {
   pointer-events: none;
 }
 
-.reader-zoom-row {
+.reader-zoom-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 10px;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.85));
+  transition: opacity 0.2s ease;
+}
+
+.reader-zoom-bar.hidden {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .reader-zoom-icon {
@@ -596,6 +611,7 @@ a {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.2);
   outline: none;
+  touch-action: pan-x; /* 모바일에서 이 슬라이더를 끌 때 세로 스크롤 제스처로 오인되지 않게 */
 }
 .reader-zoom-slider::-webkit-slider-thumb {
   -webkit-appearance: none;

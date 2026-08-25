@@ -35,13 +35,14 @@
     </button>
     <button class="sidebar-toggle" id="sidebarToggle" aria-label="회차 목록" title="회차 목록">≡</button>
   </div>
-  <div class="reader-zoom-row">
-    <span class="reader-zoom-icon" aria-hidden="true">－</span>
-    <input type="range" id="zoomSlider" class="reader-zoom-slider" min="70" max="150" step="5" value="100" aria-label="이미지 크기">
-    <span class="reader-zoom-icon" aria-hidden="true">＋</span>
-    <span id="zoomValueLabel" class="reader-zoom-value">100%</span>
-  </div>
 </header>
+
+<div class="reader-zoom-bar" id="zoomBar">
+  <span class="reader-zoom-icon" aria-hidden="true">－</span>
+  <input type="range" id="zoomSlider" class="reader-zoom-slider" min="50" max="100" step="5" value="100" aria-label="이미지 크기">
+  <span class="reader-zoom-icon" aria-hidden="true">＋</span>
+  <span id="zoomValueLabel" class="reader-zoom-value">100%</span>
+</div>
 
 <div id="pages" class="pages"></div>
 <div id="positioningOverlay" class="positioning-overlay" style="display:none">이어보던 위치로 이동 중…</div>
@@ -347,12 +348,22 @@ function applyZoom() {
 loadZoomPercent();
 applyZoom();
 
+let isAdjustingZoom = false;
+
 zoomSliderEl.addEventListener("input", () => {
   zoomPercent = parseInt(zoomSliderEl.value, 10);
   applyZoom();
   saveZoomPercent();
 });
-zoomSliderEl.addEventListener("click", (event) => event.stopPropagation());
+// 드래그 중에는 클릭/스크롤로 상단바·줄바가 숨겨지는 로직이 절대 끼어들지 못하게 막는다
+// (특히 축소 방향으로 길게 끌 때 살짝 스크롤로 오인되어 줄바 자체가 사라져버리는 문제 방지)
+for (const evt of ["pointerdown", "mousedown", "touchstart", "click"]) {
+  zoomSliderEl.addEventListener(evt, (event) => event.stopPropagation());
+}
+zoomSliderEl.addEventListener("pointerdown", () => { isAdjustingZoom = true; });
+window.addEventListener("pointerup", () => { isAdjustingZoom = false; });
+zoomSliderEl.addEventListener("touchstart", () => { isAdjustingZoom = true; }, { passive: true });
+window.addEventListener("touchend", () => { isAdjustingZoom = false; });
 
 window.addEventListener("resize", applyZoom);
 
@@ -748,12 +759,20 @@ document.getElementById("sidebarOverlay").addEventListener("click", closeSidebar
 
 let lastY = window.scrollY;
 const topbar = document.getElementById("topbar");
+const zoomBar = document.getElementById("zoomBar");
+
+function setChromeHidden(hidden) {
+  if (isAdjustingZoom) return; // 슬라이더 조작 중엔 숨김 로직이 절대 끼어들지 않게
+  topbar.classList.toggle("hidden", hidden);
+  zoomBar.classList.toggle("hidden", hidden);
+}
+
 window.addEventListener(
   "scroll",
   () => {
     const y = window.scrollY;
-    if (y > lastY && y > 80) topbar.classList.add("hidden");
-    else topbar.classList.remove("hidden");
+    if (y > lastY && y > 80) setChromeHidden(true);
+    else setChromeHidden(false);
     lastY = y;
   },
   { passive: true }
@@ -768,7 +787,7 @@ pagesEl.addEventListener("click", (e) => {
     return;
   }
   // 링크(다음 화 카드 등) 클릭은 그대로 이동하도록 두고 토글만 별도로 처리
-  topbar.classList.toggle("hidden");
+  setChromeHidden(!topbar.classList.contains("hidden"));
 });
 
 // ---------------------------------------------------------------------
