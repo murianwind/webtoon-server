@@ -675,21 +675,23 @@ function renderSidebar() {
 }
 
 function highlightSidebar() {
-  // currentChapterId 기준으로 이전 회차는 "읽음", 그 회차는 "읽는 중"으로 표시.
-  // 스크롤로 자연스럽게 진행 중이든, 사이드바에서 직접 건너뛰었든 동일한 기준.
-  const readIndex = chapterIndexById(currentChapterId);
+  // 회차별 읽음/읽는 중 표시는 기본적으로 서버가 계산해준 ch.read / ch.reading을 쓴다
+  // (메인 화면 사이드바에서 개별 회차를 콕 집어 읽음/안읽음으로 바꾼 경우도 정확히 반영됨).
+  // 다만 지금 이 세션에서 스크롤로 이미 지나온 회차(currentChapterId보다 앞)는 서버에
+  // 아직 저장 안 됐어도 즉시 "읽음"으로 같이 쳐줘서, 새로고침 없이도 실시간으로 맞게 보인다.
+  const currentIdx = chapterIndexById(currentChapterId);
   for (const row of sidebarListEl.querySelectorAll(".sidebar-row")) {
     const idx = parseInt(row.dataset.idx, 10);
-    row.classList.toggle("active", row.dataset.chapterId === currentChapterId);
+    const ch = seriesData.chapters[idx];
+    const isCurrent = row.dataset.chapterId === currentChapterId;
+    row.classList.toggle("active", isCurrent);
 
     const statusEl = row.querySelector(".sidebar-row-status");
-    if (readIndex < 0) {
-      statusEl.textContent = "";
-      statusEl.className = "sidebar-row-status";
-    } else if (idx < readIndex) {
+    const effectiveRead = (ch && ch.read) || (currentIdx >= 0 && idx < currentIdx);
+    if (effectiveRead) {
       statusEl.textContent = "읽음";
       statusEl.className = "sidebar-row-status read";
-    } else if (idx === readIndex) {
+    } else if (isCurrent) {
       statusEl.textContent = "읽는 중";
       statusEl.className = "sidebar-row-status reading";
     } else {
