@@ -71,9 +71,30 @@ let currentPageIndex = 0;
 let isLoadingNext = false;
 let saveTimer = null;
 
-// 리더 화면별 UI 설정. 전체 화면 상태는 웹툰(seriesId) 단위로 저장한다.
-const FULLSCREEN_SETTING_PREFIX = "reader_fullscreen:";
-const SCROLL_SPEED_SETTING_KEY = "reader_scroll_speed";
+// 리더 화면별 UI 설정: 전체화면 / 스크롤 속도 / 확대·축소.
+// 이 세 가지를 웹툰마다 따로 기억할지, 어디서 바꾸든 전체 공통으로 적용할지는
+// 설정 패널(목록 화면 ⚙)에서 고른 값(READER_SCOPE_SETTING_KEY)을 따른다.
+const READER_SCOPE_SETTING_KEY = "reader_settings_scope";
+let readerSettingsScope = "global"; // "global" | "per_series" - load()에서 서버 값으로 갱신됨
+
+function readerSettingKey(baseKey) {
+  return readerSettingsScope === "per_series" ? `${baseKey}:${seriesId}` : baseKey;
+}
+
+async function loadReaderSettingsScope() {
+  try {
+    const res = await fetch(`/api/settings/${READER_SCOPE_SETTING_KEY}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.value === "per_series") readerSettingsScope = "per_series";
+    }
+  } catch (e) {
+    // 못 받아와도 기본값(전체 공통)으로 계속 진행
+  }
+}
+
+const FULLSCREEN_BASE_KEY = "reader_fullscreen";
+const SCROLL_SPEED_BASE_KEY = "reader_scroll_speed";
 const SCROLL_SPEEDS = [0.5, 1, 1.5, 2, 3];
 const DEFAULT_SCROLL_SPEED = 1;
 const SCROLL_PIXELS_PER_SECOND = 650;
@@ -123,7 +144,7 @@ function chapterIndexById(id) {
 // ---------------------------------------------------------------------
 
 function fullscreenSettingKey() {
-  return `${FULLSCREEN_SETTING_PREFIX}${seriesId}`;
+  return readerSettingKey(FULLSCREEN_BASE_KEY);
 }
 
 async function readFullscreenPreference() {
@@ -224,17 +245,18 @@ document.getElementById("backLink").addEventListener("click", leaveReaderForList
 async function loadScrollSpeed() {
   // 서버 설정을 우선 사용하되, 서버에 값이 없거나 요청에 실패하면
   // 기존 브라우저의 localStorage 값도 사용할 수 있게 한다 (전체화면 설정과 동일한 방식).
-  const localValue = parseFloat(localStorage.getItem(SCROLL_SPEED_SETTING_KEY) || "");
+  const key = readerSettingKey(SCROLL_SPEED_BASE_KEY);
+  const localValue = parseFloat(localStorage.getItem(key) || "");
   if (SCROLL_SPEEDS.includes(localValue)) scrollSpeed = localValue;
 
   try {
-    const res = await fetch(`/api/settings/${encodeURIComponent(SCROLL_SPEED_SETTING_KEY)}`);
+    const res = await fetch(`/api/settings/${encodeURIComponent(key)}`);
     if (res.ok) {
       const data = await res.json();
       const serverValue = parseFloat(data.value || "");
       if (SCROLL_SPEEDS.includes(serverValue)) {
         scrollSpeed = serverValue;
-        localStorage.setItem(SCROLL_SPEED_SETTING_KEY, String(serverValue));
+        localStorage.setItem(key, String(serverValue));
       }
     }
   } catch (e) {
@@ -244,8 +266,9 @@ async function loadScrollSpeed() {
 }
 
 function saveScrollSpeed() {
-  localStorage.setItem(SCROLL_SPEED_SETTING_KEY, String(scrollSpeed));
-  fetch(`/api/settings/${encodeURIComponent(SCROLL_SPEED_SETTING_KEY)}`, {
+  const key = readerSettingKey(SCROLL_SPEED_BASE_KEY);
+  localStorage.setItem(key, String(scrollSpeed));
+  fetch(`/api/settings/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: String(scrollSpeed) }),
@@ -327,8 +350,6 @@ window.addEventListener("keydown", handleScrollKeyDown, { passive: false });
 window.addEventListener("keyup", handleScrollKeyUp, { passive: false });
 window.addEventListener("blur", stopContinuousScroll);
 
-loadScrollSpeed();
-
 // ---------------------------------------------------------------------
 // 이미지 확대/축소
 //
@@ -339,7 +360,7 @@ loadScrollSpeed();
 // 자연스럽게 맞물린다.
 // ---------------------------------------------------------------------
 
-const ZOOM_STORAGE_KEY = "reader_zoom_percent";
+const ZOOM_BASE_KEY = "reader_zoom_percent";
 const ZOOM_MIN = parseInt(zoomSliderEl.min, 10); // 너무 작아져서 못 읽는 수준까지는 안 내려가게 슬라이더 자체에 하한을 둠
 const ZOOM_MAX = parseInt(zoomSliderEl.max, 10);
 const ZOOM_BASE_WIDTH = 720; // 기존 기본 이미지 최대 폭(px)과 동일한 기준
@@ -348,19 +369,20 @@ let zoomPercent = 100;
 async function loadZoomPercent() {
   // 서버 설정을 우선 사용하되, 서버에 값이 없거나 요청에 실패하면
   // 기존 브라우저의 localStorage 값도 사용할 수 있게 한다 (전체화면 설정과 동일한 방식).
-  const localValue = parseInt(localStorage.getItem(ZOOM_STORAGE_KEY) || "", 10);
+  const key = readerSettingKey(ZOOM_BASE_KEY);
+  const localValue = parseInt(localStorage.getItem(key) || "", 10);
   if (Number.isFinite(localValue) && localValue >= ZOOM_MIN && localValue <= ZOOM_MAX) {
     zoomPercent = localValue;
   }
 
   try {
-    const res = await fetch(`/api/settings/${encodeURIComponent(ZOOM_STORAGE_KEY)}`);
+    const res = await fetch(`/api/settings/${encodeURIComponent(key)}`);
     if (res.ok) {
       const data = await res.json();
       const serverValue = parseInt(data.value || "", 10);
       if (Number.isFinite(serverValue) && serverValue >= ZOOM_MIN && serverValue <= ZOOM_MAX) {
         zoomPercent = serverValue;
-        localStorage.setItem(ZOOM_STORAGE_KEY, String(serverValue));
+        localStorage.setItem(key, String(serverValue));
       }
     }
   } catch (e) {
@@ -369,8 +391,9 @@ async function loadZoomPercent() {
 }
 
 function saveZoomPercent() {
-  localStorage.setItem(ZOOM_STORAGE_KEY, String(zoomPercent));
-  fetch(`/api/settings/${encodeURIComponent(ZOOM_STORAGE_KEY)}`, {
+  const key = readerSettingKey(ZOOM_BASE_KEY);
+  localStorage.setItem(key, String(zoomPercent));
+  fetch(`/api/settings/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value: String(zoomPercent) }),
@@ -837,6 +860,11 @@ pagesEl.addEventListener("click", (e) => {
 
 async function load() {
   if (!seriesId || !initialChapterId) return showError();
+
+  // 전체화면/스크롤속도/확대축소를 웹툰별로 따로 볼지, 전체 공통으로 볼지부터 정해야
+  // 나머지 세 설정을 어느 키로 읽고 쓸지 알 수 있다.
+  await loadReaderSettingsScope();
+  await loadScrollSpeed();
 
   await readFullscreenPreference();
   if (fullscreenPreference) {

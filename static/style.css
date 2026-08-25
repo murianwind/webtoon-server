@@ -322,6 +322,31 @@ a {
   margin: 6px 0;
 }
 
+.scope-toggle-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.scope-btn {
+  flex: 1;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+.scope-btn:hover {
+  border-color: var(--accent);
+}
+.scope-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a1a12;
+  font-weight: 600;
+}
+
 .lib-list {
   display: flex;
   flex-direction: column;

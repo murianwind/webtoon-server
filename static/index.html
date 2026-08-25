@@ -47,6 +47,15 @@
       <div id="excludedFolderList" class="lib-list"></div>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">리더 설정 범위</div>
+      <div class="settings-hint">전체화면 / 스크롤 속도 / 확대·축소 값을 어디서 바꾸든 모든 웹툰에
+      똑같이 적용할지, 웹툰마다 따로 기억할지 정합니다.</div>
+      <div class="scope-toggle-buttons">
+        <button id="scopeGlobalBtn" class="scope-btn" data-scope="global">전체 공통</button>
+        <button id="scopePerSeriesBtn" class="scope-btn" data-scope="per_series">웹툰별로 따로</button>
+      </div>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">백업 / 복원</div>
       <div class="settings-hint">읽음 진행률, 검색/정렬/필터 설정, 제외된 폴더 목록을 전부 포함합니다.</div>
       <div class="read-action-picker-buttons">
@@ -487,10 +496,38 @@ async function renderFolderLists() {
   }
 }
 
+const READER_SCOPE_SETTING_KEY = "reader_settings_scope";
+
+async function renderReaderScopeButtons() {
+  let scope = "global";
+  try {
+    const res = await fetch(`/api/settings/${READER_SCOPE_SETTING_KEY}`);
+    const data = await res.json();
+    if (data.value === "per_series") scope = "per_series";
+  } catch (e) {
+    // 못 받아와도 기본값(전체 공통)으로 표시
+  }
+  for (const btn of document.querySelectorAll(".scope-btn")) {
+    btn.classList.toggle("active", btn.dataset.scope === scope);
+  }
+}
+
+for (const btn of document.querySelectorAll(".scope-btn")) {
+  btn.addEventListener("click", async () => {
+    await fetch(`/api/settings/${READER_SCOPE_SETTING_KEY}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: btn.dataset.scope }),
+    });
+    renderReaderScopeButtons();
+  });
+}
+
 function openSettingsPanel() {
   settingsPanel.classList.add("open");
   settingsOverlay.classList.add("open");
   renderFolderLists();
+  renderReaderScopeButtons();
 }
 function closeSettingsPanel() {
   settingsPanel.classList.remove("open");
