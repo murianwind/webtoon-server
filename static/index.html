@@ -97,7 +97,6 @@ let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로�
 let selectedPlatform = null; // docker-compose volumes에서 정한 플랫폼 태그(네이버/카카오 등), 한 번에 하나만
 
 let selectedIds = new Set(); // 다중 선택
-let actionMode = null; // null | "chapter-read" | "chapter-unread"
 
 const searchInput = document.getElementById("searchInput");
 const sortSelect = document.getElementById("sortSelect");
@@ -224,7 +223,6 @@ function render() {
       e.stopPropagation();
       if (selectedIds.has(s.id)) selectedIds.delete(s.id);
       else selectedIds.add(s.id);
-      actionMode = null; // 선택이 바뀌면 4버튼 화면으로 되돌림
       renderActionPanel();
       render();
     });
@@ -255,7 +253,6 @@ async function goContinue(seriesId) {
 
 function clearSelection() {
   selectedIds = new Set();
-  actionMode = null;
   renderActionPanel();
   render(); // 카드의 선택 표시(●)도 즉시 지워야 함
 }
@@ -276,66 +273,15 @@ function renderActionPanel() {
 
   const body = document.getElementById("readActionBody");
 
-  if (!actionMode) {
-    body.innerHTML = `
-      <div class="read-action-grid">
-        <button data-act="all-read">전체 읽음으로 표시</button>
-        <button data-act="all-unread">전체 읽지 않음으로 표시</button>
-        <button data-act="chapter-read">회차 읽음으로 표시</button>
-        <button data-act="chapter-unread">회차 읽지 않음으로 표시</button>
-      </div>
-    `;
-    for (const btn of body.querySelectorAll("button[data-act]")) {
-      btn.addEventListener("click", () => onActionButton(btn.dataset.act));
-    }
-  } else {
-    // 회차 읽음/안읽음: 선택된 웹툰마다 각자의 회차 목록에서 하나씩 고름
-    body.innerHTML = `
-      <div class="read-action-picker">
-        <div id="pickerList" class="read-action-picker-list">
-          <div class="picker-loading">회차 불러오는 중...</div>
-        </div>
-        <div class="read-action-picker-buttons">
-          <button id="chapterPickerCancel" class="ghost">뒤로</button>
-          <button id="chapterPickerApply">적용</button>
-        </div>
-      </div>
-    `;
-    renderChapterPickers();
-    document.getElementById("chapterPickerCancel").addEventListener("click", () => {
-      actionMode = null;
-      renderActionPanel();
-    });
-    document.getElementById("chapterPickerApply").addEventListener("click", applyChapterAction);
+  body.innerHTML = `
+    <div class="read-action-grid">
+      <button data-act="all-read">전체 읽음으로 표시</button>
+      <button data-act="all-unread">전체 읽지 않음으로 표시</button>
+    </div>
+  `;
+  for (const btn of body.querySelectorAll("button[data-act]")) {
+    btn.addEventListener("click", () => onActionButton(btn.dataset.act));
   }
-}
-
-async function renderChapterPickers() {
-  const ids = [...selectedIds];
-  const results = await Promise.all(
-    ids.map((id) =>
-      fetch(`/api/series/${encodeURIComponent(id)}/chapters`).then((r) => r.json())
-    )
-  );
-
-  const listEl = document.getElementById("pickerList");
-  if (!listEl) return; // 그 사이 패널이 닫혔을 수 있음
-
-  listEl.innerHTML = "";
-  results.forEach((data, i) => {
-    const seriesId = ids[i];
-    const row = document.createElement("div");
-    row.className = "read-action-picker-row";
-    row.innerHTML = `
-      <span class="picker-series-title">${data.title}</span>
-      <select data-series-id="${seriesId}">
-        ${data.chapters
-          .map((c) => `<option value="${c.id}">${c.label}${c.read ? " (읽음)" : c.reading ? " (읽는 중)" : ""}</option>`)
-          .join("")}
-      </select>
-    `;
-    listEl.appendChild(row);
-  });
 }
 
 async function putReadState(seriesId, body) {
@@ -347,28 +293,10 @@ async function putReadState(seriesId, body) {
 }
 
 async function onActionButton(act) {
-  if (act === "all-read" || act === "all-unread") {
-    const read = act === "all-read";
-    await Promise.all(
-      [...selectedIds].map((id) => putReadState(id, { scope: "all", read }))
-    );
-    clearSelection();
-    await load();
-  } else {
-    actionMode = act;
-    renderActionPanel();
-  }
-}
-
-async function applyChapterAction() {
-  const read = actionMode === "chapter-read";
-  const selects = document.querySelectorAll("#pickerList select[data-series-id]");
-  const tasks = [];
-  for (const sel of selects) {
-    if (!sel.value) continue;
-    tasks.push(putReadState(sel.dataset.seriesId, { scope: "chapter", chapter_id: sel.value, read }));
-  }
-  await Promise.all(tasks);
+  const read = act === "all-read";
+  await Promise.all(
+    [...selectedIds].map((id) => putReadState(id, { scope: "all", read }))
+  );
   clearSelection();
   await load();
 }
@@ -665,19 +593,43 @@ async function openChapterSidebar(series) {
     const row = document.createElement("div");
     row.className = "sidebar-row";
     row.dataset.chapterId = ch.id;
-    const statusText = ch.read ? "읽음" : ch.reading ? "읽는 중" : "";
-    const statusClass = ch.read ? "read" : ch.reading ? "reading" : "";
-    row.innerHTML = `
-      <span class="sidebar-row-label">${ch.label}</span>
-      <span class="sidebar-row-status${statusClass ? " " + statusClass : ""}">${statusText}</span>
-    `;
-    row.addEventListener("click", () => {
-      location.href = `/reader.html?series=${encodeURIComponent(series.id)}&chapter=${encodeURIComponent(ch.id)}&page=0`;
-    });
+    row.title = "클릭하면 읽음/안읽음이 바뀝니다";
+    renderChapterRowStatus(row, ch);
+    row.addEventListener("click", () => toggleChapterReadState(series.id, ch, row));
     chapterSidebarList.appendChild(row);
   }
 
   positionChapterSidebarList(data.chapters);
+}
+
+function renderChapterRowStatus(row, ch) {
+  const statusText = ch.read ? "읽음" : ch.reading ? "읽는 중" : "";
+  const statusClass = ch.read ? "read" : ch.reading ? "reading" : "";
+  row.innerHTML = `
+    <span class="sidebar-row-label">${ch.label}</span>
+    <span class="sidebar-row-status${statusClass ? " " + statusClass : ""}">${statusText}</span>
+  `;
+}
+
+async function toggleChapterReadState(seriesId, ch, row) {
+  if (row.dataset.busy === "1") return; // 응답 오기 전 중복 클릭 방지
+  row.dataset.busy = "1";
+  try {
+    const res = await fetch(
+      `/api/series/${encodeURIComponent(seriesId)}/chapters/${encodeURIComponent(ch.id)}/toggle-read`,
+      { method: "POST" }
+    );
+    if (!res.ok) throw new Error("toggle failed");
+    const data = await res.json();
+    ch.read = data.read;
+    ch.reading = false; // 방금 상태를 바꿨으니 "읽는 중" 표시는 더 이상 유효하지 않음
+    renderChapterRowStatus(row, ch);
+    load(); // 메인 화면의 안읽음 배지/진행률도 갱신 (기다리지 않고 백그라운드로)
+  } catch (e) {
+    // 실패해도 조용히 무시 - 표시는 그대로 두고 다시 시도할 수 있게 함
+  } finally {
+    row.dataset.busy = "0";
+  }
 }
 
 const chapterSidebarInfo = document.getElementById("chapterSidebarInfo");

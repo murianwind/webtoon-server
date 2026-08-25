@@ -15,24 +15,32 @@
 </head>
 <body class="reader-body">
 <header class="reader-topbar" id="topbar">
-  <a class="back" id="backLink" href="/">←</a>
-  <span id="chapterTitle"></span>
-  <button class="reader-control speed-control" id="scrollSpeedToggle" aria-label="스크롤 속도" title="스크롤 속도">1x</button>
-  <button class="reader-control" id="fullscreenToggle" aria-label="전체 화면" title="전체 화면">
-    <svg id="fullscreenEnterIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-      <polyline points="8 3 3 3 3 8"></polyline>
-      <polyline points="16 3 21 3 21 8"></polyline>
-      <polyline points="8 21 3 21 3 16"></polyline>
-      <polyline points="16 21 21 21 21 16"></polyline>
-    </svg>
-    <svg id="fullscreenExitIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
-      <polyline points="9 3 9 9 3 9"></polyline>
-      <polyline points="15 3 15 9 21 9"></polyline>
-      <polyline points="9 21 9 15 3 15"></polyline>
-      <polyline points="15 21 15 15 21 15"></polyline>
-    </svg>
-  </button>
-  <button class="sidebar-toggle" id="sidebarToggle" aria-label="회차 목록" title="회차 목록">≡</button>
+  <div class="reader-topbar-row">
+    <a class="back" id="backLink" href="/">←</a>
+    <span id="chapterTitle"></span>
+    <button class="reader-control speed-control" id="scrollSpeedToggle" aria-label="스크롤 속도" title="스크롤 속도">1x</button>
+    <button class="reader-control" id="fullscreenToggle" aria-label="전체 화면" title="전체 화면">
+      <svg id="fullscreenEnterIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="8 3 3 3 3 8"></polyline>
+        <polyline points="16 3 21 3 21 8"></polyline>
+        <polyline points="8 21 3 21 3 16"></polyline>
+        <polyline points="16 21 21 21 21 16"></polyline>
+      </svg>
+      <svg id="fullscreenExitIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:none">
+        <polyline points="9 3 9 9 3 9"></polyline>
+        <polyline points="15 3 15 9 21 9"></polyline>
+        <polyline points="9 21 9 15 3 15"></polyline>
+        <polyline points="15 21 15 15 21 15"></polyline>
+      </svg>
+    </button>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-label="회차 목록" title="회차 목록">≡</button>
+  </div>
+  <div class="reader-zoom-row">
+    <span class="reader-zoom-icon" aria-hidden="true">－</span>
+    <input type="range" id="zoomSlider" class="reader-zoom-slider" min="70" max="150" step="5" value="100" aria-label="이미지 크기">
+    <span class="reader-zoom-icon" aria-hidden="true">＋</span>
+    <span id="zoomValueLabel" class="reader-zoom-value">100%</span>
+  </div>
 </header>
 
 <div id="pages" class="pages"></div>
@@ -80,6 +88,8 @@ const fullscreenToggleEl = document.getElementById("fullscreenToggle");
 const fullscreenEnterIconEl = document.getElementById("fullscreenEnterIcon");
 const fullscreenExitIconEl = document.getElementById("fullscreenExitIcon");
 const scrollSpeedToggleEl = document.getElementById("scrollSpeedToggle");
+const zoomSliderEl = document.getElementById("zoomSlider");
+const zoomValueLabelEl = document.getElementById("zoomValueLabel");
 
 function showError() {
   pagesEl.innerHTML = `<div class="empty-state">회차를 불러올 수 없습니다.</div>`;
@@ -296,6 +306,55 @@ window.addEventListener("keyup", handleScrollKeyUp, { passive: false });
 window.addEventListener("blur", stopContinuousScroll);
 
 loadScrollSpeed();
+
+// ---------------------------------------------------------------------
+// 이미지 확대/축소
+//
+// transform: scale()는 안 쓴다 - 실제 레이아웃 크기가 그대로라 스크롤 위치 계산
+// (읽음 진행률 추적, IntersectionObserver 등)이 전부 어긋나기 때문. 대신 이미지의
+// width 자체를 바꿔서 실제 문서 높이가 정직하게 늘어나거나 줄어들게 한다 - 화질이
+// 깨지는 것도 아니고(브라우저의 일반적인 이미지 리사이즈와 동일한 방식), 다른 기능과도
+// 자연스럽게 맞물린다.
+// ---------------------------------------------------------------------
+
+const ZOOM_STORAGE_KEY = "reader_zoom_percent";
+const ZOOM_MIN = parseInt(zoomSliderEl.min, 10); // 너무 작아져서 못 읽는 수준까지는 안 내려가게 슬라이더 자체에 하한을 둠
+const ZOOM_MAX = parseInt(zoomSliderEl.max, 10);
+const ZOOM_BASE_WIDTH = 720; // 기존 기본 이미지 최대 폭(px)과 동일한 기준
+let zoomPercent = 100;
+
+function loadZoomPercent() {
+  const stored = parseInt(localStorage.getItem(ZOOM_STORAGE_KEY) || "", 10);
+  if (Number.isFinite(stored) && stored >= ZOOM_MIN && stored <= ZOOM_MAX) {
+    zoomPercent = stored;
+  }
+}
+
+function saveZoomPercent() {
+  localStorage.setItem(ZOOM_STORAGE_KEY, String(zoomPercent));
+}
+
+function applyZoom() {
+  // 뷰포트보다 이미지가 원래 더 컸던 적이 없으므로(항상 화면 폭에 맞춰져 있었으므로),
+  // 기준 폭은 "지금 화면 폭과 720px 중 작은 쪽" - 기존 100% 동작과 완전히 동일한 기준.
+  const baseWidth = Math.min(window.innerWidth, ZOOM_BASE_WIDTH);
+  const widthPx = Math.round((baseWidth * zoomPercent) / 100);
+  document.documentElement.style.setProperty("--reader-image-width", `${widthPx}px`);
+  zoomValueLabelEl.textContent = `${zoomPercent}%`;
+  zoomSliderEl.value = String(zoomPercent);
+}
+
+loadZoomPercent();
+applyZoom();
+
+zoomSliderEl.addEventListener("input", () => {
+  zoomPercent = parseInt(zoomSliderEl.value, 10);
+  applyZoom();
+  saveZoomPercent();
+});
+zoomSliderEl.addEventListener("click", (event) => event.stopPropagation());
+
+window.addEventListener("resize", applyZoom);
 
 // ---------------------------------------------------------------------
 // 회차 로딩 (무한 스크롤)

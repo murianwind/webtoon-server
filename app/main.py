@@ -404,6 +404,29 @@ def list_chapters(series_id: str):
     }
 
 
+@app.post("/api/series/{series_id}/chapters/{chapter_id}/toggle-read")
+def toggle_chapter_read(series_id: str, chapter_id: str):
+    """
+    회차 하나만 콕 집어 읽음/안읽음을 반전시킨다 (범위 지정 없이 그 회차 자체만).
+    다른 회차의 읽음 상태는 전혀 건드리지 않는다.
+    """
+    series = catalog.get_series(series_id)
+    if not series:
+        raise HTTPException(404, "series not found")
+    if not any(chapter["id"] == chapter_id for chapter in series["chapters"]):
+        raise HTTPException(404, "chapter not found in series")
+
+    read_ids = db.get_read_chapter_ids(series_id)
+    if chapter_id in read_ids:
+        db.mark_chapters_unread(series_id, [chapter_id])
+        now_read = False
+    else:
+        db.mark_chapters_read(series_id, [chapter_id])
+        now_read = True
+
+    return {"ok": True, "read": now_read}
+
+
 @app.get("/api/series/{series_id}/info")
 def series_info(series_id: str):
     """
