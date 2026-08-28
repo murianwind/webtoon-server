@@ -454,13 +454,20 @@ function restoreScrollAnchor(anchor) {
 function applyZoom() {
   const anchor = captureScrollAnchor();
 
-  // 뷰포트보다 이미지가 원래 더 컸던 적이 없으므로(항상 화면 폭에 맞춰져 있었으므로),
-  // 기준 폭은 "지금 화면 폭과 720px 중 작은 쪽" - 기존 100% 동작과 완전히 동일한 기준.
-  // 전체 화면 모드에서는 화면을 꽉 채우는 게 원래 취지이므로 720px 상한을 두지 않는다.
   const isFullscreen = document.body.classList.contains("reader-fullscreen");
-  const baseWidth = isFullscreen ? window.innerWidth : Math.min(window.innerWidth, ZOOM_BASE_WIDTH);
-  const widthPx = Math.round((baseWidth * zoomPercent) / 100);
-  document.documentElement.style.setProperty("--reader-image-width", `${widthPx}px`);
+  if (isFullscreen) {
+    // 전체 화면에서는 "원본 크기, 화면보다 크면만 축소"가 기본 동작이었다. 슬라이더는 그 위에
+    // "화면 폭의 X%까지만 허용"하는 상한을 하나 더 씌우는 것뿐이라, 100%면 원래 동작과
+    // 완전히 같고 그보다 낮추면 원래도 화면보다 크던 이미지를 더 줄인다. 원본이 이미 화면보다
+    // 작은 이미지는 억지로 확대되지 않는다 (width:auto가 원본 크기 이상으로는 안 키움).
+    document.documentElement.style.setProperty("--reader-fullscreen-max-width", `${zoomPercent}vw`);
+  } else {
+    // 뷰포트보다 이미지가 원래 더 컸던 적이 없으므로(항상 화면 폭에 맞춰져 있었으므로),
+    // 기준 폭은 "지금 화면 폭과 720px 중 작은 쪽" - 기존 100% 동작과 완전히 동일한 기준.
+    const baseWidth = Math.min(window.innerWidth, ZOOM_BASE_WIDTH);
+    const widthPx = Math.round((baseWidth * zoomPercent) / 100);
+    document.documentElement.style.setProperty("--reader-image-width", `${widthPx}px`);
+  }
   zoomValueLabelEl.textContent = `${zoomPercent}%`;
   zoomSliderEl.value = String(zoomPercent);
 
