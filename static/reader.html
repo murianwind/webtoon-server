@@ -424,7 +424,36 @@ function saveZoomPercent() {
   }).catch(() => {}); // 실패해도 로컬엔 이미 저장됐으니 기능은 그대로 동작
 }
 
+function captureScrollAnchor() {
+  // 지금 뷰포트 맨 위에 걸쳐있는 이미지와, 그 이미지 안에서 몇 % 지점인지를 기록해둔다.
+  // 확대/축소로 이미지 크기가 바뀐 뒤에도 "같은 이미지의 같은 지점"을 다시 찾아와 스크롤을
+  // 맞추기 위한 기준점이다.
+  const images = pagesEl.querySelectorAll("img");
+  const scrollTop = window.scrollY;
+  for (const img of images) {
+    const rect = img.getBoundingClientRect();
+    const top = rect.top + scrollTop;
+    const bottom = top + rect.height;
+    if (bottom > scrollTop) {
+      const fraction = rect.height > 0 ? (scrollTop - top) / rect.height : 0;
+      return { img, fraction };
+    }
+  }
+  return null;
+}
+
+function restoreScrollAnchor(anchor) {
+  if (!anchor || !anchor.img.isConnected) return;
+  // getBoundingClientRect() 호출 자체가 최신 레이아웃을 강제로 계산하게 만들어서,
+  // 방금 바뀐 이미지 크기가 이미 반영된 위치를 얻을 수 있다.
+  const rect = anchor.img.getBoundingClientRect();
+  const newTop = rect.top + window.scrollY;
+  window.scrollTo(0, newTop + anchor.fraction * rect.height);
+}
+
 function applyZoom() {
+  const anchor = captureScrollAnchor();
+
   // 뷰포트보다 이미지가 원래 더 컸던 적이 없으므로(항상 화면 폭에 맞춰져 있었으므로),
   // 기준 폭은 "지금 화면 폭과 720px 중 작은 쪽" - 기존 100% 동작과 완전히 동일한 기준.
   // 전체 화면 모드에서는 화면을 꽉 채우는 게 원래 취지이므로 720px 상한을 두지 않는다.
@@ -434,6 +463,8 @@ function applyZoom() {
   document.documentElement.style.setProperty("--reader-image-width", `${widthPx}px`);
   zoomValueLabelEl.textContent = `${zoomPercent}%`;
   zoomSliderEl.value = String(zoomPercent);
+
+  restoreScrollAnchor(anchor);
 }
 
 let isAdjustingZoom = false;
