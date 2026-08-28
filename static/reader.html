@@ -212,6 +212,7 @@ function setReaderFullscreen(enabled, { persist = true, requestBrowserFullscreen
   document.body.classList.toggle("reader-fullscreen", enabled);
   if (persist) writeFullscreenPreference(enabled);
   updateFullscreenButton();
+  applyZoom(); // 전체화면 여부에 따라 확대/축소 기준폭이 달라지므로 즉시 다시 계산
 
   if (enabled && requestBrowserFullscreen) {
     enterBrowserFullscreen();
@@ -316,9 +317,16 @@ function startContinuousScroll(direction) {
   scrollAnimationFrame = requestAnimationFrame(step);
 }
 
-function scrollOnce(direction) {
-  stopContinuousScroll();
-  window.scrollBy(0, direction * Math.max(window.innerHeight * 0.85, 300));
+// 화면 한 칸(뷰포트 높이의 90%)만큼 이전/다음으로 건너뛴다. 10%를 겹치게 남겨두는 이유는
+// 전자책/PDF 리더에서 흔히 쓰는 관례와 같다 - 겹치는 부분이 없으면 경계에 걸친 말풍선/컷을
+// 놓치기 쉽고, 반대로 너무 많이 겹치면 한 번에 넘어가는 양이 적어 답답해진다. 웹툰도 세로로
+// 긴 컷이 페이지 경계에 걸리는 경우가 잦아 같은 논리가 적용된다.
+const PAGE_JUMP_OVERLAP_RATIO = 0.1;
+
+function jumpScreen(direction) {
+  stopContinuousScroll(); // 혹시 연속 스크롤 중이었다면 멈추고 한 번만 이동
+  const jumpDistance = window.innerHeight * (1 - PAGE_JUMP_OVERLAP_RATIO);
+  window.scrollBy({ top: direction * jumpDistance, left: 0, behavior: "smooth" });
 }
 
 function handleScrollKeyDown(event) {
@@ -327,19 +335,35 @@ function handleScrollKeyDown(event) {
     return;
   }
 
-  let direction = 0;
-  if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "AudioVolumeDown") direction = -1;
-  if (event.key === "ArrowDown" || event.key === "PageDown" || event.key === "AudioVolumeUp") direction = 1;
-  if (!direction) return;
+  // 위/아래 방향키(+볼륨키)는 누르고 있으면 계속 스크롤되는 기존 동작을 그대로 유지한다.
+  let holdDirection = 0;
+  if (event.key === "ArrowUp" || event.key === "AudioVolumeDown") holdDirection = -1;
+  if (event.key === "ArrowDown" || event.key === "AudioVolumeUp") holdDirection = 1;
+  if (holdDirection) {
+    event.preventDefault();
+    startContinuousScroll(holdDirection);
+    return;
+  }
 
-  event.preventDefault();
-  startContinuousScroll(direction);
+  // 좌/우 방향키와 페이지업/다운은 누르고 있어도 "원클릭" 기준으로 한 번만 화면 단위로
+  // 건너뛴다. event.repeat는 키를 누르고 있을 때 OS가 자동으로 반복 발생시키는
+  // keydown인지 구분해주는 표준 속성이라, 이걸로 실제 첫 입력만 걸러낸다.
+  if (event.key === "ArrowLeft" || event.key === "PageUp") {
+    event.preventDefault();
+    if (!event.repeat) jumpScreen(-1);
+    return;
+  }
+  if (event.key === "ArrowRight" || event.key === "PageDown") {
+    event.preventDefault();
+    if (!event.repeat) jumpScreen(1);
+    return;
+  }
 }
 
 function handleScrollKeyUp(event) {
   if (
-    event.key === "ArrowUp" || event.key === "PageUp" || event.key === "AudioVolumeDown" ||
-    event.key === "ArrowDown" || event.key === "PageDown" || event.key === "AudioVolumeUp"
+    event.key === "ArrowUp" || event.key === "AudioVolumeDown" ||
+    event.key === "ArrowDown" || event.key === "AudioVolumeUp"
   ) {
     event.preventDefault();
     stopContinuousScroll();
@@ -403,7 +427,9 @@ function saveZoomPercent() {
 function applyZoom() {
   // 뷰포트보다 이미지가 원래 더 컸던 적이 없으므로(항상 화면 폭에 맞춰져 있었으므로),
   // 기준 폭은 "지금 화면 폭과 720px 중 작은 쪽" - 기존 100% 동작과 완전히 동일한 기준.
-  const baseWidth = Math.min(window.innerWidth, ZOOM_BASE_WIDTH);
+  // 전체 화면 모드에서는 화면을 꽉 채우는 게 원래 취지이므로 720px 상한을 두지 않는다.
+  const isFullscreen = document.body.classList.contains("reader-fullscreen");
+  const baseWidth = isFullscreen ? window.innerWidth : Math.min(window.innerWidth, ZOOM_BASE_WIDTH);
   const widthPx = Math.round((baseWidth * zoomPercent) / 100);
   document.documentElement.style.setProperty("--reader-image-width", `${widthPx}px`);
   zoomValueLabelEl.textContent = `${zoomPercent}%`;
