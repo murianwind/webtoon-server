@@ -209,10 +209,15 @@ async function exitBrowserFullscreen() {
 }
 
 function setReaderFullscreen(enabled, { persist = true, requestBrowserFullscreen = false } = {}) {
+  // 전체화면 전환 자체도 모든 이미지 크기를 바꾸는 일이라, 전환 전/후 같은 지점을 유지하려면
+  // 클래스를 바꾸기 "전"에 미리 기준점을 잡아둬야 한다 (바꾼 뒤에 잡으면 이미 크기가
+  // 한 번 틀어진 상태를 기준으로 잡게 되어 오히려 위치가 어긋난다).
+  const anchor = captureScrollAnchor();
   document.body.classList.toggle("reader-fullscreen", enabled);
   if (persist) writeFullscreenPreference(enabled);
   updateFullscreenButton();
-  applyZoom(); // 전체화면 여부에 따라 확대/축소 기준폭이 달라지므로 즉시 다시 계산
+  setZoomCssVariable(); // 전체화면 여부에 따라 확대/축소 기준폭이 달라지므로 즉시 다시 계산
+  restoreScrollAnchor(anchor);
 
   if (enabled && requestBrowserFullscreen) {
     enterBrowserFullscreen();
@@ -451,9 +456,7 @@ function restoreScrollAnchor(anchor) {
   window.scrollTo(0, newTop + anchor.fraction * rect.height);
 }
 
-function applyZoom() {
-  const anchor = captureScrollAnchor();
-
+function setZoomCssVariable() {
   const isFullscreen = document.body.classList.contains("reader-fullscreen");
   if (isFullscreen) {
     // 전체 화면에서는 "원본 크기, 화면보다 크면만 축소"가 기본 동작이었다. 슬라이더는 그 위에
@@ -470,7 +473,11 @@ function applyZoom() {
   }
   zoomValueLabelEl.textContent = `${zoomPercent}%`;
   zoomSliderEl.value = String(zoomPercent);
+}
 
+function applyZoom() {
+  const anchor = captureScrollAnchor();
+  setZoomCssVariable();
   restoreScrollAnchor(anchor);
 }
 
