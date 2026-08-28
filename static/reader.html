@@ -459,12 +459,9 @@ function restoreScrollAnchor(anchor) {
 function setZoomCssVariable() {
   const isFullscreen = document.body.classList.contains("reader-fullscreen");
   if (isFullscreen) {
-    // 전체 화면에서는 "원본 크기, 화면보다 크면만 축소"가 기본 동작이었다. 슬라이더는 그 위에
-    // "화면 폭의 X%까지만 허용"하는 상한을 하나 더 씌우는 것뿐이라, 100%면 원래 동작과
-    // 완전히 같고 그보다 낮추면 원래도 화면보다 크던 이미지를 더 줄인다. 원본이 이미 화면보다
-    // 작은 이미지는 억지로 확대되지 않는다 (width:auto가 원본 크기 이상으로는 안 키움).
-    document.documentElement.style.setProperty("--reader-fullscreen-max-width", `${zoomPercent}vw`);
+    applyFullscreenImageSizing();
   } else {
+    clearFullscreenImageSizing();
     // 뷰포트보다 이미지가 원래 더 컸던 적이 없으므로(항상 화면 폭에 맞춰져 있었으므로),
     // 기준 폭은 "지금 화면 폭과 720px 중 작은 쪽" - 기존 100% 동작과 완전히 동일한 기준.
     const baseWidth = Math.min(window.innerWidth, ZOOM_BASE_WIDTH);
@@ -473,6 +470,34 @@ function setZoomCssVariable() {
   }
   zoomValueLabelEl.textContent = `${zoomPercent}%`;
   zoomSliderEl.value = String(zoomPercent);
+}
+
+// 전체 화면에서는 원본 크기 기준으로 확대/축소를 계산해야 한다. 화면 폭 기준(vw)으로 상한을
+// 씌우는 방식은, 원본 이미지 폭(보통 700~1000px)이 넓은 PC 모니터(예: 1920px)에서는 슬라이더의
+// 최솟값(50%)보다도 이미 작아서 슬라이더가 전혀 효과가 없는 문제가 있었다(모바일은 원본이
+// 화면보다 커서 우연히 동작했을 뿐). 그래서 각 이미지의 실제 원본 크기(naturalWidth)를 기준으로
+// "원본과 화면 폭 중 작은 쪽 × 배율"을 직접 계산해서 그 이미지에만 적용한다.
+function applyFullscreenImageSizing() {
+  const images = pagesEl.querySelectorAll("img");
+  for (const img of images) {
+    sizeImageForFullscreen(img);
+  }
+}
+
+function sizeImageForFullscreen(img) {
+  if (!document.body.classList.contains("reader-fullscreen")) return;
+  if (!img.naturalWidth) return; // 아직 로드 전이면 load 이벤트에서 다시 호출됨
+  const base = Math.min(img.naturalWidth, window.innerWidth);
+  const target = Math.round((base * zoomPercent) / 100);
+  img.style.width = `${target}px`;
+}
+
+function clearFullscreenImageSizing() {
+  // 일반 모드로 돌아오면 JS가 강제로 넣어둔 인라인 폭을 지워서, 공통 CSS 규칙
+  // (--reader-image-width 변수 기반)이 다시 그대로 적용되게 한다.
+  for (const img of pagesEl.querySelectorAll("img")) {
+    img.style.width = "";
+  }
 }
 
 function applyZoom() {
@@ -672,6 +697,7 @@ async function revealSkippedPages(chapter, skipCount, wrapEl) {
     img.dataset.key = `${chapter.id}:${i}`;
     img.src = `/api/chapters/${encodeURIComponent(chapter.id)}/pages/${i}`;
     img.alt = `${i + 1}페이지`;
+    img.addEventListener("load", () => sizeImageForFullscreen(img));
     pageObserver.observe(img);
     frag.appendChild(img);
   }
@@ -712,6 +738,7 @@ async function appendChapter(chapter, { scrollToPage = null, skipPages = 0 } = {
     img.dataset.key = `${chapter.id}:${i}`;
     img.src = `/api/chapters/${encodeURIComponent(chapter.id)}/pages/${i}`;
     img.alt = `${i + 1}페이지`;
+    img.addEventListener("load", () => sizeImageForFullscreen(img));
     pagesEl.appendChild(img);
     pageObserver.observe(img);
     lastImg = img;

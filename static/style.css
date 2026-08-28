@@ -705,18 +705,19 @@ a {
   position: fixed;
 }
 
-/* 전체 화면: 원본 확대 없이, 화면보다 큰 이미지만 화면 폭 기준으로 줄인다 (기본 동작).
-   슬라이더는 그 위에 "화면 폭의 X%까지만" 이라는 상한을 하나 더 씌우는 역할만 한다 -
-   100%일 땐 원래 동작과 완전히 같고, 낮추면 원래도 화면보다 크던 이미지를 더 줄인다.
-   원본이 이미 화면보다 작은 이미지는 100%에서처럼 그대로 유지되고 억지로 확대되지 않는다. */
+/* 전체 화면: 기본은 원본 확대 없이 화면보다 큰 이미지만 화면 폭에 맞춰 줄이는 것.
+   실제 폭 계산(원본 크기 × 확대/축소 배율)은 JS(sizeImageForFullscreen)가 이미지마다
+   인라인 width로 넣어준다 - 원본 크기가 이미지마다 달라서 CSS 변수 하나로는 표현할 수
+   없기 때문. max-width는 반드시 none으로 풀어줘야 한다 - 안 그러면 일반 모드에서 쓰던
+   --reader-image-width 기반 max-width가 그대로 남아있어서 JS가 넣은 인라인 width를
+   도로 눌러버린다. */
 .reader-fullscreen .pages img {
-  width: auto;
-  max-width: var(--reader-fullscreen-max-width, 100vw);
+  max-width: none;
   height: auto;
 }
 
 .reader-fullscreen .pages .page-placeholder {
-  max-width: var(--reader-fullscreen-max-width, 100vw);
+  max-width: 100vw;
 }
 
 .pages {
