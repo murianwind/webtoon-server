@@ -703,6 +703,14 @@ function closeChapterSidebar() {
 document.getElementById("chapterSidebarClose").addEventListener("click", closeChapterSidebar);
 chapterSidebarOverlay.addEventListener("click", closeChapterSidebar);
 
+// 브라우저 자체 뒤로가기(bfcache)로 이 페이지에 돌아오면, 페이지가 새로 실행되지 않고
+// 리더에서 나가기 전의 예전 화면을 메모리에서 그대로 복원해버려서 안읽음 개수 등이
+// 갱신 안 된 채로 보인다. event.persisted가 true면 정확히 이 경우이므로, 그때만
+// 최신 데이터를 다시 불러온다.
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) load();
+});
+
 init();
 </script>
 </body>
