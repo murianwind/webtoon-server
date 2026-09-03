@@ -450,14 +450,12 @@ def toggle_chapter_read(series_id: str, chapter_id: str):
     if chapter_id in read_ids:
         db.mark_chapters_unread(series_id, [chapter_id])
         now_read = False
-        # 안읽음으로 바꾼 회차가 지금 이어보기 위치와 같거나 그 이전이면, 이어보기 기준점도
-        # 그 앞으로 당긴다 - 안 그러면 방금 안읽음으로 바꾼 회차 뒤쪽을 계속 가리키게 된다.
+        # 안읽음으로 바꾼 회차가 지금 이어보기 위치와 같거나 그 이전이면, 이어보기 기준점을
+        # "그 이전 회차 완독"이 아니라 방금 안읽음으로 만든 이 회차 자체(0페이지)로 옮긴다.
+        # 이전 회차를 가리키게 하면 그 회차는 이미 읽음 상태라 "읽는 중" 표시가 나올 자리가
+        # 아예 없어져 버린다 - 방금 안읽음으로 만든 회차 쪽이 "읽는 중"으로 보여야 자연스럽다.
         if current_index >= idx:
-            if idx == 0:
-                db.delete_progress(series_id)
-            else:
-                prev_chapter = chapters[idx - 1]
-                db.set_progress(series_id, prev_chapter["id"], idx - 1, db.PAGE_FINISHED_SENTINEL)
+            db.set_progress(series_id, chapter_id, idx, 0)
     else:
         db.mark_chapters_read(series_id, [chapter_id])
         now_read = True
