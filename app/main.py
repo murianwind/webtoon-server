@@ -428,21 +428,42 @@ def list_chapters(series_id: str):
 def toggle_chapter_read(series_id: str, chapter_id: str):
     """
     회차 하나만 콕 집어 읽음/안읽음을 반전시킨다 (범위 지정 없이 그 회차 자체만).
-    다른 회차의 읽음 상태는 전혀 건드리지 않는다.
+    다른 회차의 읽음 기록은 전혀 건드리지 않는다.
+
+    다만 "이어보기(진행률 포인터)"는 이 회차별 읽음 기록과 별개로 저장되어 있어서,
+    그냥 두면 여기서 안읽음으로 바꾼 회차가 이미 지나간 걸로 남아 이어보기가 엉뚱한
+    (더 뒤의) 위치를 계속 가리키게 된다. 그래서 지금 이어보기 위치와 비교해서 필요하면
+    포인터도 같이 당겨준다/밀어준다 - 전체읽음/부분읽음 처리(set_read_state)와 같은 원리.
     """
     series = catalog.get_series(series_id)
     if not series:
         raise HTTPException(404, "series not found")
-    if not any(chapter["id"] == chapter_id for chapter in series["chapters"]):
+    chapters = series["chapters"]
+    idx = next((i for i, chapter in enumerate(chapters) if chapter["id"] == chapter_id), None)
+    if idx is None:
         raise HTTPException(404, "chapter not found in series")
 
     read_ids = db.get_read_chapter_ids(series_id)
+    prog = db.get_progress(series_id)
+    current_index = _resolve_read_index(chapters, prog)
+
     if chapter_id in read_ids:
         db.mark_chapters_unread(series_id, [chapter_id])
         now_read = False
+        # 안읽음으로 바꾼 회차가 지금 이어보기 위치와 같거나 그 이전이면, 이어보기 기준점도
+        # 그 앞으로 당긴다 - 안 그러면 방금 안읽음으로 바꾼 회차 뒤쪽을 계속 가리키게 된다.
+        if current_index >= idx:
+            if idx == 0:
+                db.delete_progress(series_id)
+            else:
+                prev_chapter = chapters[idx - 1]
+                db.set_progress(series_id, prev_chapter["id"], idx - 1, db.PAGE_FINISHED_SENTINEL)
     else:
         db.mark_chapters_read(series_id, [chapter_id])
         now_read = True
+        # 읽음으로 바꾼 회차가 지금 이어보기 위치보다 뒤라면, 이어보기 기준점도 여기로 당긴다.
+        if idx >= current_index:
+            db.set_progress(series_id, chapter_id, idx, db.PAGE_FINISHED_SENTINEL)
 
     return {"ok": True, "read": now_read}
 
