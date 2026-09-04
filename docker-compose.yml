@@ -8,6 +8,10 @@
 # 오른쪽의 /library/<이름>이 그대로 화면에 표시되는 태그입니다. 원하는 이름으로
 # 자유롭게 지으면 됩니다. 필요한 만큼 줄을 추가/삭제하세요.
 #
+# 구글드라이브/원드라이브 등 클라우드 드라이브도 rclone의 Docker 볼륨 플러그인을 쓰면
+# 똑같이 volumes 한 줄로 추가할 수 있습니다 (아래 "클라우드 드라이브 예시" 참고, 자세한
+# 설정 방법은 README의 "구글드라이브 / 원드라이브 등 클라우드 드라이브 연결하기" 참고).
+#
 # 자동 업데이트: webtoon-server의 labels에 있는
 # com.centurylinklabs.watchtower.enable=true 는 Watchtower용 표시입니다. 이미
 # Watchtower를 쓰고 계시면 --label-enable 옵션이 켜져 있는 한 자동으로 인식되어 새
@@ -30,8 +34,13 @@ services:
     volumes:
       - "/path/to/your/naver-webtoons:/library/naver"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그
       - "/path/to/your/kakao-webtoons:/library/kakao"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그
+      # - "webtoon_gdrive:/library/gdrive:ro"            # <-- 클라우드 드라이브 예시(선택): rclone 볼륨 플러그인으로
+      #                                                   #     만든 볼륨을 연결할 때만 주석을 풀고 이름을 맞추세요.
+      #                                                   #     읽기 전용(:ro)으로 붙여서 원본을 이중으로 보호합니다.
       - "webtoon_data:/data"
     restart: unless-stopped
 
 volumes:
   webtoon_data:
+  # webtoon_gdrive:                                      # <-- 클라우드 드라이브 예시(선택): 위 volumes에서 주석을
+  #   external: true                                      #     풀었다면 이 두 줄도 같이 풀고 이름을 맞추세요.
