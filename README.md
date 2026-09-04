@@ -134,6 +134,110 @@ volumes:
 실행될 때 지정된 경로만 볼 수 있어서, 마운트되지 않은 완전히 새로운 경로는 웹 UI만으로는
 추가할 수 없습니다.
 
+## 구글드라이브 / 원드라이브 등 클라우드 드라이브 연결하기
+
+로컬 디스크가 아니라 구글드라이브·원드라이브 같은 클라우드에 웹툰을 보관하고 계셔도,
+**[rclone](https://rclone.org)의 공식 Docker 볼륨 플러그인**을 쓰면 코드 수정 없이 그대로
+라이브러리에 추가할 수 있습니다. rclone이 지원하는 저장소라면(구글드라이브, 원드라이브,
+드롭박스, S3 호환 등) 전부 같은 방법이 통합니다.
+
+**왜 이 방법인가**: WinFsp/rclone mount로 만든 가상 드라이브를 Docker 볼륨으로 직접
+연결하려고 하면(Windows + Docker Desktop 조합), 대부분 인식이 안 됩니다 — WinFsp는
+Windows가 흉내 낸 가상 파일시스템이라 Docker Desktop의 WSL2 경계를 못 넘는 경우가
+흔합니다. SMB 공유로 우회하는 것도 마운트된 드라이브 자체가 공유 조건을 충족 못 하는
+경우가 많고요. 반면 아래 방법은 **Docker 자체의 볼륨 플러그인 시스템 안에서 곧바로**
+동작하기 때문에 이 경계 문제 자체가 생기지 않습니다.
+
+### 1. rclone 리모트 준비
+
+로컬 PC에 이미 rclone이 설정되어 있다면(`rclone config`로 만든 리모트가 있다면) 그대로
+써도 되고, 새로 만들어도 됩니다. 리모트 이름과 그 안의 경로(예: `onedrive:웹툰폴더`)를
+알아두세요.
+
+### 2. Docker 볼륨 플러그인 설치
+
+```
+docker plugin install rclone/docker-volume-rclone:amd64
+```
+
+설치 중 권한(네트워크, 마운트 경로, `/dev/fuse`, `CAP_SYS_ADMIN`) 승인을 물어보면 `y`로
+승인합니다.
+
+> 이 단계에서 `open /var/lib/docker-plugins/rclone/config: no such file or directory`
+> 같은 에러가 나면, 플러그인이 필요로 하는 폴더가 아직 없어서입니다. 아래처럼 빈
+> 컨테이너 하나로 그 경로들을 먼저 만들어준 뒤 다시 설치하면 됩니다:
+> ```
+> docker run --rm -v /var/lib/docker-plugins/rclone/config:/config -v /var/lib/docker-plugins/rclone/cache:/cache hello-world
+> docker plugin install rclone/docker-volume-rclone:amd64
+> ```
+
+### 3. rclone 설정 파일을 플러그인에 전달
+
+이 플러그인은 자기만의 별도 설정 공간을 쓰기 때문에, 기존 `rclone.conf`를 그대로
+복사해줘야 합니다. `rclone config file` 명령으로 기존 설정 파일 경로를 확인한 뒤:
+
+```
+docker run --rm -v "<rclone.conf가 있는 폴더>:/source" -v /var/lib/docker-plugins/rclone/config:/dest alpine cp /source/rclone.conf /dest/rclone.conf
+```
+
+### 4. Docker 볼륨 생성
+
+```
+docker volume create -d rclone/docker-volume-rclone:amd64 -o "remote=<리모트이름>:<경로>" -o vfs-cache-mode=full <원하는 볼륨 이름>
+```
+
+예시 (원드라이브의 "웹툰" 폴더를 `webtoon_onedrive`라는 이름으로):
+
+```
+docker volume create -d rclone/docker-volume-rclone:amd64 -o "remote=onedrive:웹툰" -o vfs-cache-mode=full webtoon_onedrive
+```
+
+**경로에 공백이 있으면 반드시 `-o "remote=..."` 전체를 따옴표로 감싸세요** — 안 그러면
+공백에서 인수가 잘려서 엉뚱한 값으로 인식됩니다.
+
+`vfs-cache-mode=full`은 한 번 읽은 파일을 로컬에 캐싱해서 재접속 시 빠르게 만들어주는
+옵션입니다. 필요하면 `-o vfs-cache-max-size=10G`처럼 캐시 용량 상한도 같이 지정할 수
+있습니다(디스크 전체를 다 채우지 않도록).
+
+만들어진 볼륨에 실제로 파일이 보이는지는 임시 컨테이너로 확인해보면 됩니다:
+
+```
+docker run --rm -v <볼륨 이름>:/test alpine ls /test
+```
+
+### 5. `docker-compose.yml`에 연결
+
+최상위 `volumes:`에 이 볼륨을 외부 볼륨으로 등록하고, `webtoon-server` 서비스의
+`volumes:`에 마운트를 추가합니다:
+
+```yaml
+services:
+  webtoon-server:
+    # ...
+    volumes:
+      - "/path/to/your/naver-webtoons:/library/naver"
+      - "<볼륨 이름>:/library/<원하는 태그명>:ro"     # <-- 클라우드 드라이브 추가
+      - "webtoon_data:/data"
+    # ...
+
+volumes:
+  webtoon_data:
+  <볼륨 이름>:
+    external: true
+```
+
+`:ro`(읽기 전용)를 붙여두면, webtoon-server가 원래 파일을 안 지우는 서비스이긴 하지만
+클라우드 원본 쪽은 이중으로 안전하게 보호됩니다.
+
+재배포하면 이 클라우드 폴더도 다른 플랫폼 폴더와 똑같이 스캔되어 목록에 나타납니다.
+
+### 참고
+
+- 네트워크를 통해 파일을 읽어오는 방식이라, 로컬 디스크보다는 회차를 처음 열 때 느릴 수
+  있습니다(캐시된 뒤에는 빨라집니다).
+- rclone 설정 파일에는 계정 접근 토큰이 그대로 들어있으니, 다른 사람과 공유하거나
+  대화방/채팅에 붙여넣지 않도록 주의하세요.
+
 ## API로 최신 화 바로가기 URL 조회하기
 
 디스코드 알림 봇처럼 외부에서 "이 시리즈 최신 화로 바로 가는 링크"가 필요하면
