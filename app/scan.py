@@ -184,12 +184,44 @@ def list_platforms_in_scan_order() -> list[str]:
     return fast_platforms + slow_platforms
 
 
+def list_platform_series_refs(platform: str) -> list[str]:
+    """
+    플랫폼 폴더 안의 시리즈 후보 경로만 빠르게 나열한다(zip 목록을 세거나 회차를 만들지
+    않고, 폴더 존재 여부만 확인 - _find_series_dirs 자체가 이미 가벼움). 시리즈를 하나씩
+    스캔하기 전에 "총 몇 개인지, 뭐가 있는지"를 먼저 알아야 순서대로 처리할 수 있어서
+    필요하다. 설정 패널의 "스캔 중/제외된 폴더" 목록에도 그대로 재사용한다.
+    """
+    platform_path = os.path.join(LIBRARY_ROOT, platform)
+    if not os.path.isdir(platform_path):
+        return []
+    return [ref for ref, _ in _find_series_dirs(platform_path)]
+
+
+def iter_platform_series(platform: str, series_refs: list[str]):
+    """
+    주어진 series_refs를 순서대로 하나씩 스캔해서 (series_entry, chapters_map)을 그
+    자리에서 바로 내놓는 제너레이터. 플랫폼 전체가 끝나기를 기다리지 않고 시리즈 하나가
+    끝날 때마다 즉시 화면에 반영할 수 있게 하기 위함이다(네트워크 드라이브에 시리즈가
+    많을 때, 마지막 하나가 안 끝났다고 나머지 전부가 안 보이는 걸 막기 위함).
+    """
+    excluded = db.get_excluded_series()
+    for series_ref in series_refs:
+        if (platform, series_ref) in excluded:
+            continue
+        result = scan_single_series(platform, series_ref)
+        if result:
+            yield result
+
+
 def scan_platform(platform: str) -> tuple[dict, dict, list[str]]:
     """
     플랫폼 폴더 하나만 스캔한다. 반환값은 (series_map, chapters_map, all_series_refs) -
     all_series_refs는 제외 여부와 무관하게 zip이 있는 모든 폴더의 상대경로 목록으로,
     설정 패널의 "스캔 중/제외된 폴더" 목록에 재사용하기 위한 것이다(다시 디스크를
     훑지 않고 이 스캔 결과를 그대로 캐싱해서 쓰면 되므로).
+
+    (참고: 시리즈 하나 끝날 때마다 바로 화면에 반영하고 싶으면 이 함수 대신
+    list_platform_series_refs() + iter_platform_series()를 조합해서 쓸 것.)
     """
     series_map = {}
     chapters_map = {}

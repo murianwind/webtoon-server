@@ -100,9 +100,27 @@ def remove_series(series_id: str) -> None:
 
 
 def add_series(series_entry: dict, chapters_map: dict) -> None:
-    """시리즈 하나를 카탈로그에 즉시 추가한다(재포함 처리 - 전체 재스캔 없이 바로 반영)."""
+    """시리즈 하나를 카탈로그에 즉시 추가한다(포함/신규 스캔 시 - 전체 재스캔 없이 바로 반영)."""
     _state["series"][series_entry["id"]] = series_entry
     _state["chapters"].update(chapters_map)
+    _state["last_scan_at"] = datetime.now()
+
+
+def set_platform_folder_refs(platform: str, folder_refs: list[str]) -> None:
+    """설정 패널의 폴더 목록 캐시만 갱신한다(시리즈 스캔 결과와는 별개로, 시리즈를
+    하나씩 스캔하기 전에 "이 플랫폼에 이런 폴더들이 있다"를 먼저 반영해두기 위함)."""
+    _state["folder_refs"][platform] = folder_refs
+
+
+def prune_platform_series(platform: str, keep_ids: set[str]) -> None:
+    """이 플랫폼 소속 시리즈 중 keep_ids에 없는 건 카탈로그에서 뺀다 - 이번 스캔에서
+    다시 나타나지 않은 것(폴더가 삭제됐거나 새로 제외된 경우)을 정리하기 위함이다."""
+    to_remove = [
+        sid for sid, s in _state["series"].items()
+        if s["platform"] == platform and sid not in keep_ids
+    ]
+    for sid in to_remove:
+        remove_series(sid)
 
 
 def get_all_folder_refs() -> list[tuple[str, str]]:

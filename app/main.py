@@ -109,18 +109,29 @@ def _log_scan_result(prefix: str, series_map: dict, chapters_map: dict, added: i
 
 async def _scan_all_platforms_incrementally() -> tuple[dict, dict]:
     """
-    플랫폼을 하나씩(로컬 먼저, 네트워크 드라이브는 나중에) 스캔해서 끝나는 대로 즉시
-    카탈로그에 반영한다. 이러면 로컬 플랫폼은 스캔이 끝나자마자 바로 목록에 뜨고,
-    네트워크 드라이브는 그동안 계속 스캔 중이어도 화면 자체는 이미 갱신되어 있다.
+    플랫폼을 하나씩(로컬 먼저, 네트워크 드라이브는 나중에) 스캔하고, 그 플랫폼 안에서도
+    시리즈를 하나씩 스캔해서 끝나는 대로 즉시 카탈로그에 반영한다. 시리즈 하나 끝날 때마다
+    바로 반영하는 이유는, 네트워크 드라이브에 시리즈가 많을 때 마지막 하나가 안 끝났다는
+    이유로 나머지 전부가 안 보이는 걸 막기 위함이다.
     """
     platforms = await asyncio.to_thread(scan.list_platforms_in_scan_order)
     # 폴더 이름만 훑는 거라 거의 즉시 끝남 - 실제 시리즈 스캔이 끝나기 전에 먼저 기록해둬서,
     # 프론트엔드가 "이런 플랫폼이 있다"를 미리 보여줄 수 있게 한다(플랫폼 필터 탭 등).
     catalog.set_known_platforms(platforms)
     for platform in platforms:
-        p_series, p_chapters, p_folder_refs = await asyncio.to_thread(scan.scan_platform, platform)
-        catalog.merge_platform(platform, p_series, p_chapters, p_folder_refs)
-        log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(p_series)}개) - 즉시 목록에 반영됨")
+        series_refs = await asyncio.to_thread(scan.list_platform_series_refs, platform)
+        catalog.set_platform_folder_refs(platform, series_refs)
+
+        seen_ids = set()
+        for series_ref in series_refs:
+            result = await asyncio.to_thread(scan.scan_single_series, platform, series_ref)
+            if result:
+                series_entry, chapters_map = result
+                catalog.add_series(series_entry, chapters_map)
+                seen_ids.add(series_entry["id"])
+        # 이번 스캔에서 다시 나타나지 않은(삭제되었거나 새로 제외된) 기존 시리즈는 정리
+        catalog.prune_platform_series(platform, seen_ids)
+        log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(seen_ids)}개, 하나씩 즉시 반영됨)")
     return catalog.get_series_map(), catalog.get_chapters_map()
 
 
