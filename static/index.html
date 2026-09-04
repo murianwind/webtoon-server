@@ -92,6 +92,7 @@
 const LS_QUERY = "webtoon:index:query";
 const LS_SORT = "webtoon:index:sort";
 const FILTER_KEY = "status_filter"; // 서버(app_settings)에 저장 -> 모든 기기에서 동일하게 적용
+const PLATFORM_FILTER_KEY = "platform_filter"; // 위와 같은 이유로 서버에 저장
 const STATUS_OPTIONS = [
   { value: "unread", label: "읽지 않음" },
   { value: "reading", label: "읽는 중" },
@@ -133,6 +134,24 @@ function saveFilterSetting() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
   }).catch(() => {});
+}
+
+function savePlatformFilterSetting() {
+  fetch(`/api/settings/${PLATFORM_FILTER_KEY}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: selectedPlatform || "" }),
+  }).catch(() => {});
+}
+
+async function loadPlatformFilterSetting() {
+  try {
+    const res = await fetch(`/api/settings/${PLATFORM_FILTER_KEY}`);
+    const data = await res.json();
+    selectedPlatform = data.value || null;
+  } catch (e) {
+    // 못 받아와도 기본값(전체)으로 계속 진행
+  }
 }
 
 function renderFilterTabs() {
@@ -184,6 +203,7 @@ function renderFilterTabs() {
         selectedPlatform = selectedPlatform === platform ? null : platform;
         renderFilterTabs();
         render();
+        savePlatformFilterSetting();
       });
       container.appendChild(btn);
     }
@@ -364,7 +384,7 @@ async function load() {
 
 async function init() {
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
-  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), fetchScanStatus()]);
+  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값 반영해서 다시 그림
   if (ok) render();
 }

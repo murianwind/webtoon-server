@@ -142,6 +142,28 @@ def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
     return sort_key, label
 
 
+def _find_series_dirs(platform_path: str) -> list[tuple[str, str]]:
+    """
+    platform_path 아래를 재귀적으로 훑어서, zip 파일을 하나라도 직접 담고 있는 모든 폴더를
+    찾는다. 시리즈 폴더가 플랫폼 폴더 바로 아래(1단계)에 있든, 작가별로 한 단계 더 묶어둔
+    경우(예: 작가 폴더/시리즈 폴더)든 상관없이 zip이 직접 있는 지점을 전부 시리즈로 인식한다.
+
+    반환값은 (platform_path 기준 상대경로, 실제 절대경로) 쌍의 목록. 상대경로는 항상
+    '/'로 이어붙여서(OS 무관하게) 안정적인 식별자로 쓴다. 1단계짜리 얕은 시리즈는 상대경로가
+    곧 폴더명 그 자체라, 기존에 그렇게만 스캔되던 경우의 ID 계산과 완전히 동일하게 유지된다.
+    """
+    found = []
+    for dirpath, dirnames, filenames in os.walk(platform_path):
+        dirnames.sort()
+        has_zip = any(f.lower().endswith(".zip") for f in filenames)
+        if has_zip:
+            rel = os.path.relpath(dirpath, platform_path).replace(os.sep, "/")
+            found.append((rel, dirpath))
+            dirnames.clear()  # 시리즈 폴더로 인식된 곳 안쪽은 더 내려가지 않음(중복/오인 방지)
+    found.sort(key=lambda pair: pair[0])
+    return found
+
+
 def list_all_series_folders() -> list[dict]:
     """디스크상에 있는 (zip이 하나라도 있는) 모든 (platform, series) 폴더 목록.
     제외 여부와 무관하게 전부 보여준다 - 제외됐던 걸 다시 추가할 때 필요."""
@@ -152,13 +174,8 @@ def list_all_series_folders() -> list[dict]:
         platform_path = os.path.join(LIBRARY_ROOT, platform)
         if not os.path.isdir(platform_path):
             continue
-        for series_name in sorted(os.listdir(platform_path)):
-            series_path = os.path.join(platform_path, series_name)
-            if not os.path.isdir(series_path):
-                continue
-            has_zip = any(f.lower().endswith(".zip") for f in os.listdir(series_path))
-            if has_zip:
-                result.append({"platform": platform, "series": series_name})
+        for series_ref, _ in _find_series_dirs(platform_path):
+            result.append({"platform": platform, "series": series_ref})
     return result
 
 
@@ -178,24 +195,23 @@ def scan_library() -> tuple[dict, dict]:
         if not os.path.isdir(platform_path):
             continue
 
-        for series_name in sorted(os.listdir(platform_path)):
-            if (platform, series_name) in excluded:
+        for series_ref, series_path in _find_series_dirs(platform_path):
+            if (platform, series_ref) in excluded:
                 continue
 
-            series_path = os.path.join(platform_path, series_name)
-            if not os.path.isdir(series_path):
-                continue
+            # 화면에 보여줄 이름은 폴더명만(중간에 작가 폴더 등으로 묶여 있어도 그 부분은 안 보여줌).
+            series_name = os.path.basename(series_ref)
 
             zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
             if not zip_filenames:
                 continue
 
-            series_id = make_id(platform, series_name)
+            series_id = make_id(platform, series_ref)
             chapters = []
             for zip_filename in zip_filenames:
                 stem = zip_filename[:-4]
                 sort_key, label = parse_chapter_label(stem, series_name)
-                chapter_id = make_id(platform, series_name, zip_filename)
+                chapter_id = make_id(platform, series_ref, zip_filename)
                 full_path = os.path.join(series_path, zip_filename)
                 chapters.append(
                     {

@@ -107,8 +107,11 @@ def _log_scan_result(prefix: str, series_map: dict, chapters_map: dict, added: i
         log.info(f"{prefix} - 변경 없음 (시리즈 {len(series_map)}개, 회차 {len(chapters_map)}개)")
 
 
-def _rescan_and_replace_catalog() -> tuple[dict, dict]:
-    series_map, chapters_map = scan.scan_library()
+async def _rescan_and_replace_catalog() -> tuple[dict, dict]:
+    # scan_library()는 디스크(또는 네트워크 드라이브)를 동기적으로 읽는 블로킹 함수라,
+    # 그대로 await하면 그 시간 동안 서버 전체가 다른 요청(이미지 서빙 등)에 응답을
+    # 못 하게 된다. to_thread로 별도 스레드에 넘겨서 이벤트 루프가 안 막히게 한다.
+    series_map, chapters_map = await asyncio.to_thread(scan.scan_library)
     catalog.replace(series_map, chapters_map)
     return series_map, chapters_map
 
@@ -121,9 +124,11 @@ def _rescan_and_replace_catalog() -> tuple[dict, dict]:
 @app.on_event("startup")
 async def startup_scan():
     db.init_schema()
-    series_map, chapters_map = _rescan_and_replace_catalog()
-    _log_scan_result(f"라이브러리 스캔 완료 (경로: {scan.LIBRARY_ROOT})", series_map, chapters_map)
-    asyncio.create_task(overlap.precompute_overlaps())
+    # 첫 스캔도 백그라운드로 돌린다 - 네트워크 드라이브(원드라이브 등)가 섞여 있으면
+    # 전체 스캔에 시간이 걸릴 수 있는데, 그걸 여기서 기다리면 컨테이너 시작 자체가
+    # 그만큼 느려진다. create_task로 넘기면 서버는 바로 요청을 받기 시작하고,
+    # 스캔이 끝나는 대로 목록에 자연스럽게 반영된다(그 사이엔 빈 목록으로 보임).
+    asyncio.create_task(_initial_scan())
 
     if RESCAN_INTERVAL_SECONDS > 0:
         log.info(f"자동 재스캔 활성화 - {RESCAN_INTERVAL_SECONDS / 60:.0f}분마다 실행")
@@ -132,11 +137,21 @@ async def startup_scan():
         log.info("자동 재스캔 비활성화됨 (RESCAN_INTERVAL_SECONDS <= 0)")
 
 
+async def _initial_scan() -> None:
+    log.info(f"라이브러리 스캔 시작 (경로: {scan.LIBRARY_ROOT}) - 백그라운드로 진행, 서버는 이미 요청을 받고 있음")
+    try:
+        series_map, chapters_map = await _rescan_and_replace_catalog()
+        _log_scan_result(f"라이브러리 스캔 완료 (경로: {scan.LIBRARY_ROOT})", series_map, chapters_map)
+        asyncio.create_task(overlap.precompute_overlaps())
+    except Exception:
+        log.exception("초기 스캔 중 오류 발생")
+
+
 async def _auto_rescan_loop():
     while True:
         await asyncio.sleep(RESCAN_INTERVAL_SECONDS)
         try:
-            series_map, chapters_map = scan.scan_library()
+            series_map, chapters_map = await asyncio.to_thread(scan.scan_library)
             added, removed = catalog.diff_and_replace(series_map, chapters_map)
             _log_scan_result("자동 재스캔 완료", series_map, chapters_map, added, removed)
             asyncio.create_task(overlap.precompute_overlaps())
@@ -147,7 +162,7 @@ async def _auto_rescan_loop():
 
 @app.post("/api/rescan")
 async def rescan():
-    series_map, chapters_map = scan.scan_library()
+    series_map, chapters_map = await asyncio.to_thread(scan.scan_library)
     added, removed = catalog.diff_and_replace(series_map, chapters_map)
     _log_scan_result("수동 재스캔 완료", series_map, chapters_map, added, removed)
     asyncio.create_task(overlap.precompute_overlaps())
@@ -183,21 +198,21 @@ class SeriesFolderRef(BaseModel):
 
 
 @app.post("/api/series-folders/exclude")
-def exclude_series_folder(body: SeriesFolderRef):
+async def exclude_series_folder(body: SeriesFolderRef):
     excluded = db.get_excluded_series()
     excluded.add((body.platform, body.series))
     db.set_excluded_series(excluded)
-    _rescan_and_replace_catalog()
+    await _rescan_and_replace_catalog()
     log.info(f"시리즈 폴더 스캔 제외: {body.platform}/{body.series} (파일은 삭제하지 않음)")
     return {"ok": True}
 
 
 @app.post("/api/series-folders/include")
-def include_series_folder(body: SeriesFolderRef):
+async def include_series_folder(body: SeriesFolderRef):
     excluded = db.get_excluded_series()
     excluded.discard((body.platform, body.series))
     db.set_excluded_series(excluded)
-    _rescan_and_replace_catalog()
+    await _rescan_and_replace_catalog()
     log.info(f"시리즈 폴더 다시 포함: {body.platform}/{body.series}")
     return {"ok": True}
 
@@ -579,13 +594,13 @@ class RestorePayload(BaseModel):
 
 
 @app.post("/api/restore")
-def import_backup(body: RestorePayload):
+async def import_backup(body: RestorePayload):
     progress_count, settings_count, read_count = db.import_backup_data(
         body.progress, body.app_settings, body.read_chapters
     )
 
     # 라이브러리 등록(제외 목록) 상태도 복원됐을 수 있으니 다시 스캔해서 반영
-    _rescan_and_replace_catalog()
+    await _rescan_and_replace_catalog()
 
     log.info(
         f"백업 복원 완료 - progress {progress_count}건, settings {settings_count}건, "
