@@ -740,6 +740,16 @@ async function toggleChapterReadState(seriesId, ch, row) {
 
 const chapterSidebarInfo = document.getElementById("chapterSidebarInfo");
 
+function formatNotesRow(notes) {
+  // "원작: 이우혁"처럼 "라벨: 값" 형태면 다른 항목들과 똑같이 라벨만 볼드로 표시.
+  // 콜론이 없는 자유 텍스트면 그냥 원문 그대로 보여준다.
+  const match = notes.match(/^([^:：]{1,10})[:：]\s*(.+)$/s);
+  if (match) {
+    return `<div class="series-info-row"><b>${match[1].trim()}</b> ${match[2].trim()}</div>`;
+  }
+  return `<div class="series-info-row">${notes}</div>`;
+}
+
 async function renderSeriesInfoPanel(seriesId) {
   chapterSidebarInfo.style.display = "none";
   chapterSidebarInfo.innerHTML = "";
@@ -755,9 +765,9 @@ async function renderSeriesInfoPanel(seriesId) {
   const rows = [];
   if (info.writer) rows.push(`<div class="series-info-row"><b>작가</b> ${info.writer}</div>`);
   if (info.cover_artist) rows.push(`<div class="series-info-row"><b>그림</b> ${info.cover_artist}</div>`);
+  if (info.notes) rows.push(formatNotesRow(info.notes));
   if (info.genre) rows.push(`<div class="series-info-row"><b>장르</b> ${info.genre}</div>`);
   if (info.age_rating) rows.push(`<div class="series-info-row"><b>연령등급</b> ${info.age_rating}</div>`);
-  if (info.notes) rows.push(`<div class="series-info-row">${info.notes}</div>`);
   if (info.summary) rows.push(`<div class="series-info-summary">${info.summary.replace(/\s*\n\s*/g, " ").trim()}</div>`);
   if (info.web_url) rows.push(`<a class="series-info-link" href="${info.web_url}" target="_blank" rel="noopener">원작 페이지 열기 ↗</a>`);
 
