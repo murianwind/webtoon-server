@@ -361,6 +361,8 @@ def _parse_series_info(series_path: str) -> dict | None:
         "age_rating": text("AgeRating"),
         "web_url": text("Web"),
         "publisher": text("Publisher"),
+        "notes": text("Notes"),
+        "cover_artist": text("CoverArtist"),
     }
     # 전부 빈 값이면 사실상 쓸모없으니 None 취급
     return info if any(info[k] for k in info if k != "genres") or genres else None

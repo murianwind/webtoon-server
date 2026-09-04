@@ -754,8 +754,10 @@ async function renderSeriesInfoPanel(seriesId) {
 
   const rows = [];
   if (info.writer) rows.push(`<div class="series-info-row"><b>작가</b> ${info.writer}</div>`);
+  if (info.cover_artist) rows.push(`<div class="series-info-row"><b>그림</b> ${info.cover_artist}</div>`);
   if (info.genre) rows.push(`<div class="series-info-row"><b>장르</b> ${info.genre}</div>`);
   if (info.age_rating) rows.push(`<div class="series-info-row"><b>연령등급</b> ${info.age_rating}</div>`);
+  if (info.notes) rows.push(`<div class="series-info-row">${info.notes}</div>`);
   if (info.summary) rows.push(`<div class="series-info-summary">${info.summary.replace(/\s*\n\s*/g, " ").trim()}</div>`);
   if (info.web_url) rows.push(`<a class="series-info-link" href="${info.web_url}" target="_blank" rel="noopener">원작 페이지 열기 ↗</a>`);
 
