@@ -114,6 +114,9 @@ async def _scan_all_platforms_incrementally() -> tuple[dict, dict]:
     네트워크 드라이브는 그동안 계속 스캔 중이어도 화면 자체는 이미 갱신되어 있다.
     """
     platforms = await asyncio.to_thread(scan.list_platforms_in_scan_order)
+    # 폴더 이름만 훑는 거라 거의 즉시 끝남 - 실제 시리즈 스캔이 끝나기 전에 먼저 기록해둬서,
+    # 프론트엔드가 "이런 플랫폼이 있다"를 미리 보여줄 수 있게 한다(플랫폼 필터 탭 등).
+    catalog.set_known_platforms(platforms)
     for platform in platforms:
         p_series, p_chapters, p_folder_refs = await asyncio.to_thread(scan.scan_platform, platform)
         catalog.merge_platform(platform, p_series, p_chapters, p_folder_refs)
@@ -180,8 +183,12 @@ async def rescan():
 
 @app.get("/api/scan-status")
 def scan_status():
-    """설정 패널 등에 표시할 마지막 스캔 시각."""
-    return {"last_scan_at": catalog.get_last_scan_display()}
+    """설정 패널 등에 표시할 마지막 스캔 시각 + 알고 있는 전체 플랫폼 목록(아직
+    시리즈가 하나도 안 뜬 플랫폼이라도, 폴더 자체는 있다는 걸 미리 알려주기 위함)."""
+    return {
+        "last_scan_at": catalog.get_last_scan_display(),
+        "platforms": catalog.get_known_platforms(),
+    }
 
 
 # ---------------------------------------------------------------------------

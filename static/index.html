@@ -105,6 +105,7 @@ let query = localStorage.getItem(LS_QUERY) || "";
 let sortMode = localStorage.getItem(LS_SORT) || "latest";
 let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로드되기 전까지의 기본값)
 let selectedPlatforms = new Set(); // 비어있으면 "전체 플랫폼", 여러 개 동시 선택 가능
+let knownPlatforms = []; // /library 바로 아래 폴더 이름 전체 (아직 스캔 안 끝난 것도 포함)
 
 let selectedIds = new Set(); // 다중 선택
 
@@ -188,10 +189,12 @@ function renderFilterTabs() {
     container.appendChild(btn);
   }
 
-  // docker-compose volumes에서 정한 플랫폼 태그(네이버/카카오 등) - 지금 로드된
-  // 시리즈 목록 기준으로 실제 쓰이고 있는 플랫폼만 매번 새로 구성
+  // docker-compose volumes에서 정한 플랫폼 태그(네이버/카카오 등) - 실제로 시리즈가
+  // 뜬 플랫폼뿐 아니라, 아직 스캔 중이라 시리즈가 하나도 없는 플랫폼도 knownPlatforms로
+  // 미리 알고 있으면 같이 보여준다 (네트워크 드라이브가 늦게 끝나도 탭 자체는 먼저 보이게)
   const platformSet = new Set();
   for (const s of allSeries) platformSet.add(s.platform);
+  for (const p of knownPlatforms) platformSet.add(p);
   if (platformSet.size > 1) {
     const divider = document.createElement("span");
     divider.className = "filter-tab-divider";
@@ -373,9 +376,47 @@ async function fetchScanStatus() {
     document.getElementById("scanStatusText").textContent = data.last_scan_at
       ? `마지막 스캔 ${data.last_scan_at}`
       : "";
+    knownPlatforms = data.platforms || [];
   } catch (e) {
     // 실패해도 조용히 무시 (표시만 안 될 뿐 기능엔 영향 없음)
   }
+}
+
+// 알고 있는 플랫폼(knownPlatforms) 중에 아직 시리즈가 하나도 안 뜬 게 있으면, 스캔이
+// 마저 끝나는 대로 화면에 자동으로 채워지도록 몇 초마다 다시 불러온다. 전부 채워지거나
+// 시도 횟수를 다 쓰면(네트워크 드라이브가 아예 비어있거나 실패한 경우 등, 무한정 돌지
+// 않도록) 스스로 멈춘다.
+let scanPollTimer = null;
+let scanPollAttempts = 0;
+const SCAN_POLL_MAX_ATTEMPTS = 40; // 3초 간격 * 40 = 최대 2분
+
+function hasUnscannedKnownPlatform() {
+  const scanned = new Set(allSeries.map((s) => s.platform));
+  return knownPlatforms.some((p) => !scanned.has(p));
+}
+
+function stopScanPolling() {
+  if (scanPollTimer) {
+    clearInterval(scanPollTimer);
+    scanPollTimer = null;
+  }
+}
+
+function maybeStartScanPolling() {
+  if (scanPollTimer || !hasUnscannedKnownPlatform()) return;
+  scanPollAttempts = 0;
+  scanPollTimer = setInterval(async () => {
+    scanPollAttempts += 1;
+    const ok = await fetchSeries();
+    await fetchScanStatus();
+    if (ok) {
+      renderFilterTabs();
+      render();
+    }
+    if (!hasUnscannedKnownPlatform() || scanPollAttempts >= SCAN_POLL_MAX_ATTEMPTS) {
+      stopScanPolling();
+    }
+  }, 3000);
 }
 
 async function load() {
@@ -384,14 +425,17 @@ async function load() {
     renderFilterTabs(); // 재스캔으로 새 장르가 생겼을 수도 있으니 같이 갱신
     render();
   }
-  fetchScanStatus();
+  await fetchScanStatus();
+  renderFilterTabs(); // knownPlatforms가 갱신됐을 수 있으니 다시 그림
+  maybeStartScanPolling();
 }
 
 async function init() {
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
   const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), fetchScanStatus()]);
-  renderFilterTabs(); // 서버 값 반영해서 다시 그림
+  renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (ok) render();
+  maybeStartScanPolling();
 }
 
 searchInput.addEventListener("input", (e) => {

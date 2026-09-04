@@ -8,7 +8,7 @@
 
 from datetime import datetime
 
-_state = {"series": {}, "chapters": {}, "last_scan_at": None, "folder_refs": {}}
+_state = {"series": {}, "chapters": {}, "last_scan_at": None, "folder_refs": {}, "known_platforms": []}
 
 
 def get_series_map() -> dict:
@@ -32,6 +32,19 @@ def get_last_scan_display() -> str | None:
     TZ 환경변수가 설정되어 있으면 그 시간대 기준으로 표시된다."""
     dt = _state["last_scan_at"]
     return dt.strftime("%Y-%m-%d %H:%M") if dt else None
+
+
+def set_known_platforms(platforms: list[str]) -> None:
+    """
+    /library 바로 아래 폴더 이름 목록(=플랫폼 태그)을 기록해둔다. 폴더 이름만 훑는 거라
+    거의 즉시 알 수 있어서, 실제 시리즈 스캔(특히 네트워크 드라이브)이 끝나기 한참
+    전이라도 "이런 플랫폼이 있다"는 걸 화면에 먼저 보여줄 수 있게 하기 위함이다.
+    """
+    _state["known_platforms"] = list(platforms)
+
+
+def get_known_platforms() -> list[str]:
+    return _state["known_platforms"]
 
 
 def replace(series_map: dict, chapters_map: dict) -> None:
