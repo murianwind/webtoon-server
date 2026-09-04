@@ -164,80 +164,149 @@ def _find_series_dirs(platform_path: str) -> list[tuple[str, str]]:
     return found
 
 
-def list_all_series_folders() -> list[dict]:
-    """디스크상에 있는 (zip이 하나라도 있는) 모든 (platform, series) 폴더 목록.
-    제외 여부와 무관하게 전부 보여준다 - 제외됐던 걸 다시 추가할 때 필요."""
-    result = []
+def list_platforms_in_scan_order() -> list[str]:
+    """
+    스캔할 플랫폼 폴더 목록을, 로컬이 먼저 오고 네트워크 드라이브가 나중에 오도록 정렬해서
+    반환한다. 어떤 폴더가 "느린(네트워크) 저장소"인지는 컨테이너 안에서 자동으로 알아낼
+    방법이 마땅치 않아서(마운트 방식이 여러 가지라 자동 판별이 애매함), 환경변수
+    SLOW_PLATFORMS(콤마로 구분한 플랫폼 폴더명)로 직접 지정하게 한다. 지정된 플랫폼은
+    항상 뒤로 미뤄지고, 나머지는 기존처럼 이름순이다.
+    """
     if not os.path.isdir(LIBRARY_ROOT):
-        return result
-    for platform in sorted(os.listdir(LIBRARY_ROOT)):
-        platform_path = os.path.join(LIBRARY_ROOT, platform)
-        if not os.path.isdir(platform_path):
+        return []
+    platforms = [
+        name for name in sorted(os.listdir(LIBRARY_ROOT))
+        if os.path.isdir(os.path.join(LIBRARY_ROOT, name))
+    ]
+    slow = {p.strip() for p in os.environ.get("SLOW_PLATFORMS", "").split(",") if p.strip()}
+    fast_platforms = [p for p in platforms if p not in slow]
+    slow_platforms = [p for p in platforms if p in slow]
+    return fast_platforms + slow_platforms
+
+
+def scan_platform(platform: str) -> tuple[dict, dict, list[str]]:
+    """
+    플랫폼 폴더 하나만 스캔한다. 반환값은 (series_map, chapters_map, all_series_refs) -
+    all_series_refs는 제외 여부와 무관하게 zip이 있는 모든 폴더의 상대경로 목록으로,
+    설정 패널의 "스캔 중/제외된 폴더" 목록에 재사용하기 위한 것이다(다시 디스크를
+    훑지 않고 이 스캔 결과를 그대로 캐싱해서 쓰면 되므로).
+    """
+    series_map = {}
+    chapters_map = {}
+    platform_path = os.path.join(LIBRARY_ROOT, platform)
+    if not os.path.isdir(platform_path):
+        return series_map, chapters_map, []
+
+    excluded = db.get_excluded_series()
+    series_dirs = _find_series_dirs(platform_path)
+    all_series_refs = [ref for ref, _ in series_dirs]
+
+    for series_ref, series_path in series_dirs:
+        if (platform, series_ref) in excluded:
             continue
-        for series_ref, _ in _find_series_dirs(platform_path):
-            result.append({"platform": platform, "series": series_ref})
-    return result
+
+        # 화면에 보여줄 이름은 폴더명만(중간에 작가 폴더 등으로 묶여 있어도 그 부분은 안 보여줌).
+        series_name = os.path.basename(series_ref)
+
+        zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
+        if not zip_filenames:
+            continue
+
+        series_id = make_id(platform, series_ref)
+        chapters = []
+        for zip_filename in zip_filenames:
+            stem = zip_filename[:-4]
+            sort_key, label = parse_chapter_label(stem, series_name)
+            chapter_id = make_id(platform, series_ref, zip_filename)
+            full_path = os.path.join(series_path, zip_filename)
+            chapters.append(
+                {
+                    "id": chapter_id,
+                    "label": label,
+                    "sort_key": sort_key,
+                    "filename": zip_filename,
+                    "path": full_path,
+                }
+            )
+            chapters_map[chapter_id] = full_path
+
+        chapters.sort(key=lambda chapter: (chapter["sort_key"], chapter["filename"]))
+        latest_mtime = max((os.path.getmtime(chapter["path"]) for chapter in chapters), default=0)
+
+        series_map[series_id] = {
+            "id": series_id,
+            "platform": platform,
+            "title": series_name,
+            "path": series_path,
+            "chapters": chapters,
+            "latest_mtime": latest_mtime,
+            "cover_path": _find_series_cover(series_path),
+            "info": _parse_series_info(series_path),
+        }
+
+    return series_map, chapters_map, all_series_refs
+
+
+def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | None:
+    """
+    시리즈 폴더 딱 하나만 스캔한다(제외했다가 다시 포함시킬 때, 플랫폼 전체를 다시
+    스캔할 필요 없이 이 폴더 하나만 반영하기 위함). 반환값은 (series_entry, chapters_map)
+    이거나, 폴더가 없거나 zip이 없으면 None.
+    """
+    platform_path = os.path.join(LIBRARY_ROOT, platform)
+    series_path = os.path.join(platform_path, *series_ref.split("/"))
+    if not os.path.isdir(series_path):
+        return None
+
+    series_name = os.path.basename(series_ref)
+    zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
+    if not zip_filenames:
+        return None
+
+    series_id = make_id(platform, series_ref)
+    chapters = []
+    chapters_map = {}
+    for zip_filename in zip_filenames:
+        stem = zip_filename[:-4]
+        sort_key, label = parse_chapter_label(stem, series_name)
+        chapter_id = make_id(platform, series_ref, zip_filename)
+        full_path = os.path.join(series_path, zip_filename)
+        chapters.append(
+            {
+                "id": chapter_id,
+                "label": label,
+                "sort_key": sort_key,
+                "filename": zip_filename,
+                "path": full_path,
+            }
+        )
+        chapters_map[chapter_id] = full_path
+
+    chapters.sort(key=lambda chapter: (chapter["sort_key"], chapter["filename"]))
+    latest_mtime = max((os.path.getmtime(chapter["path"]) for chapter in chapters), default=0)
+
+    series_entry = {
+        "id": series_id,
+        "platform": platform,
+        "title": series_name,
+        "path": series_path,
+        "chapters": chapters,
+        "latest_mtime": latest_mtime,
+        "cover_path": _find_series_cover(series_path),
+        "info": _parse_series_info(series_path),
+    }
+    return series_entry, chapters_map
 
 
 def scan_library() -> tuple[dict, dict]:
-    """LIBRARY_ROOT를 스캔해서 (series_map, chapters_map)을 반환.
-    db.get_excluded_series()에 있는 (platform, series) 조합은 건너뛴다."""
+    """전체 라이브러리를 한 번에 스캔(플랫폼 우선순위 순서로 훑되, 결과는 합쳐서 반환).
+    점진적으로 반영하고 싶으면 scan_platform()을 플랫폼별로 직접 호출할 것."""
     series_map = {}
     chapters_map = {}
-
-    if not os.path.isdir(LIBRARY_ROOT):
-        return series_map, chapters_map
-
-    excluded = db.get_excluded_series()
-
-    for platform in sorted(os.listdir(LIBRARY_ROOT)):
-        platform_path = os.path.join(LIBRARY_ROOT, platform)
-        if not os.path.isdir(platform_path):
-            continue
-
-        for series_ref, series_path in _find_series_dirs(platform_path):
-            if (platform, series_ref) in excluded:
-                continue
-
-            # 화면에 보여줄 이름은 폴더명만(중간에 작가 폴더 등으로 묶여 있어도 그 부분은 안 보여줌).
-            series_name = os.path.basename(series_ref)
-
-            zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
-            if not zip_filenames:
-                continue
-
-            series_id = make_id(platform, series_ref)
-            chapters = []
-            for zip_filename in zip_filenames:
-                stem = zip_filename[:-4]
-                sort_key, label = parse_chapter_label(stem, series_name)
-                chapter_id = make_id(platform, series_ref, zip_filename)
-                full_path = os.path.join(series_path, zip_filename)
-                chapters.append(
-                    {
-                        "id": chapter_id,
-                        "label": label,
-                        "sort_key": sort_key,
-                        "filename": zip_filename,
-                        "path": full_path,
-                    }
-                )
-                chapters_map[chapter_id] = full_path
-
-            chapters.sort(key=lambda chapter: (chapter["sort_key"], chapter["filename"]))
-            latest_mtime = max((os.path.getmtime(chapter["path"]) for chapter in chapters), default=0)
-
-            series_map[series_id] = {
-                "id": series_id,
-                "platform": platform,
-                "title": series_name,
-                "path": series_path,
-                "chapters": chapters,
-                "latest_mtime": latest_mtime,
-                "cover_path": _find_series_cover(series_path),
-                "info": _parse_series_info(series_path),
-            }
-
+    for platform in list_platforms_in_scan_order():
+        p_series, p_chapters, _ = scan_platform(platform)
+        series_map.update(p_series)
+        chapters_map.update(p_chapters)
     return series_map, chapters_map
 
 

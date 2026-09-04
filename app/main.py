@@ -107,13 +107,18 @@ def _log_scan_result(prefix: str, series_map: dict, chapters_map: dict, added: i
         log.info(f"{prefix} - 변경 없음 (시리즈 {len(series_map)}개, 회차 {len(chapters_map)}개)")
 
 
-async def _rescan_and_replace_catalog() -> tuple[dict, dict]:
-    # scan_library()는 디스크(또는 네트워크 드라이브)를 동기적으로 읽는 블로킹 함수라,
-    # 그대로 await하면 그 시간 동안 서버 전체가 다른 요청(이미지 서빙 등)에 응답을
-    # 못 하게 된다. to_thread로 별도 스레드에 넘겨서 이벤트 루프가 안 막히게 한다.
-    series_map, chapters_map = await asyncio.to_thread(scan.scan_library)
-    catalog.replace(series_map, chapters_map)
-    return series_map, chapters_map
+async def _scan_all_platforms_incrementally() -> tuple[dict, dict]:
+    """
+    플랫폼을 하나씩(로컬 먼저, 네트워크 드라이브는 나중에) 스캔해서 끝나는 대로 즉시
+    카탈로그에 반영한다. 이러면 로컬 플랫폼은 스캔이 끝나자마자 바로 목록에 뜨고,
+    네트워크 드라이브는 그동안 계속 스캔 중이어도 화면 자체는 이미 갱신되어 있다.
+    """
+    platforms = await asyncio.to_thread(scan.list_platforms_in_scan_order)
+    for platform in platforms:
+        p_series, p_chapters, p_folder_refs = await asyncio.to_thread(scan.scan_platform, platform)
+        catalog.merge_platform(platform, p_series, p_chapters, p_folder_refs)
+        log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(p_series)}개) - 즉시 목록에 반영됨")
+    return catalog.get_series_map(), catalog.get_chapters_map()
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +132,7 @@ async def startup_scan():
     # 첫 스캔도 백그라운드로 돌린다 - 네트워크 드라이브(원드라이브 등)가 섞여 있으면
     # 전체 스캔에 시간이 걸릴 수 있는데, 그걸 여기서 기다리면 컨테이너 시작 자체가
     # 그만큼 느려진다. create_task로 넘기면 서버는 바로 요청을 받기 시작하고,
-    # 스캔이 끝나는 대로 목록에 자연스럽게 반영된다(그 사이엔 빈 목록으로 보임).
+    # 플랫폼별로 스캔이 끝나는 대로 목록에 자연스럽게 반영된다.
     asyncio.create_task(_initial_scan())
 
     if RESCAN_INTERVAL_SECONDS > 0:
@@ -140,7 +145,7 @@ async def startup_scan():
 async def _initial_scan() -> None:
     log.info(f"라이브러리 스캔 시작 (경로: {scan.LIBRARY_ROOT}) - 백그라운드로 진행, 서버는 이미 요청을 받고 있음")
     try:
-        series_map, chapters_map = await _rescan_and_replace_catalog()
+        series_map, chapters_map = await _scan_all_platforms_incrementally()
         _log_scan_result(f"라이브러리 스캔 완료 (경로: {scan.LIBRARY_ROOT})", series_map, chapters_map)
         asyncio.create_task(overlap.precompute_overlaps())
     except Exception:
@@ -151,8 +156,10 @@ async def _auto_rescan_loop():
     while True:
         await asyncio.sleep(RESCAN_INTERVAL_SECONDS)
         try:
-            series_map, chapters_map = await asyncio.to_thread(scan.scan_library)
-            added, removed = catalog.diff_and_replace(series_map, chapters_map)
+            old_ids = set(catalog.get_series_map().keys())
+            series_map, chapters_map = await _scan_all_platforms_incrementally()
+            added = len(set(series_map.keys()) - old_ids)
+            removed = len(old_ids - set(series_map.keys()))
             _log_scan_result("자동 재스캔 완료", series_map, chapters_map, added, removed)
             asyncio.create_task(overlap.precompute_overlaps())
         except Exception:
@@ -162,8 +169,10 @@ async def _auto_rescan_loop():
 
 @app.post("/api/rescan")
 async def rescan():
-    series_map, chapters_map = await asyncio.to_thread(scan.scan_library)
-    added, removed = catalog.diff_and_replace(series_map, chapters_map)
+    old_ids = set(catalog.get_series_map().keys())
+    series_map, chapters_map = await _scan_all_platforms_incrementally()
+    added = len(set(series_map.keys()) - old_ids)
+    removed = len(old_ids - set(series_map.keys()))
     _log_scan_result("수동 재스캔 완료", series_map, chapters_map, added, removed)
     asyncio.create_task(overlap.precompute_overlaps())
     return {"series_count": len(series_map)}
@@ -183,9 +192,11 @@ def scan_status():
 
 @app.get("/api/series-folders")
 def list_series_folders():
-    """디스크상의 모든 시리즈 폴더를 스캔 중/제외됨으로 나눠서 보여준다."""
+    """스캔 중/제외된 폴더 목록. 디스크를 다시 훑지 않고, 마지막 스캔 때 이미 기록해둔
+    결과(catalog.get_all_folder_refs)를 그대로 재사용한다 - 이 목록을 열 때마다
+    네트워크 드라이브까지 다시 훑으면 그만큼 느려지기 때문."""
     excluded = db.get_excluded_series()
-    all_folders = scan.list_all_series_folders()
+    all_folders = [{"platform": p, "series": r} for p, r in catalog.get_all_folder_refs()]
     return {
         "included": [f for f in all_folders if (f["platform"], f["series"]) not in excluded],
         "excluded": [f for f in all_folders if (f["platform"], f["series"]) in excluded],
@@ -198,21 +209,30 @@ class SeriesFolderRef(BaseModel):
 
 
 @app.post("/api/series-folders/exclude")
-async def exclude_series_folder(body: SeriesFolderRef):
+def exclude_series_folder(body: SeriesFolderRef):
+    """제외는 이미 스캔되어 카탈로그에 있는 시리즈를 메모리에서 바로 빼는 것뿐이라,
+    디스크를 다시 훑을 필요가 없다 - 그래서 즉시 반영된다."""
     excluded = db.get_excluded_series()
     excluded.add((body.platform, body.series))
     db.set_excluded_series(excluded)
-    await _rescan_and_replace_catalog()
+    series_id = scan.make_id(body.platform, body.series)
+    catalog.remove_series(series_id)
     log.info(f"시리즈 폴더 스캔 제외: {body.platform}/{body.series} (파일은 삭제하지 않음)")
     return {"ok": True}
 
 
 @app.post("/api/series-folders/include")
 async def include_series_folder(body: SeriesFolderRef):
+    """재포함도 전체 재스캔이 아니라 이 폴더 하나만 다시 읽어서 카탈로그에 더한다."""
     excluded = db.get_excluded_series()
     excluded.discard((body.platform, body.series))
     db.set_excluded_series(excluded)
-    await _rescan_and_replace_catalog()
+
+    result = await asyncio.to_thread(scan.scan_single_series, body.platform, body.series)
+    if result:
+        series_entry, chapters_map = result
+        catalog.add_series(series_entry, chapters_map)
+        asyncio.create_task(overlap.precompute_overlaps())
     log.info(f"시리즈 폴더 다시 포함: {body.platform}/{body.series}")
     return {"ok": True}
 
@@ -608,7 +628,7 @@ async def import_backup(body: RestorePayload):
     )
 
     # 라이브러리 등록(제외 목록) 상태도 복원됐을 수 있으니 다시 스캔해서 반영
-    await _rescan_and_replace_catalog()
+    await _scan_all_platforms_incrementally()
 
     log.info(
         f"백업 복원 완료 - progress {progress_count}건, settings {settings_count}건, "

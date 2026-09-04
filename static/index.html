@@ -104,7 +104,7 @@ let allSeries = [];
 let query = localStorage.getItem(LS_QUERY) || "";
 let sortMode = localStorage.getItem(LS_SORT) || "latest";
 let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로드되기 전까지의 기본값)
-let selectedPlatform = null; // docker-compose volumes에서 정한 플랫폼 태그(네이버/카카오 등), 한 번에 하나만
+let selectedPlatforms = new Set(); // 비어있으면 "전체 플랫폼", 여러 개 동시 선택 가능
 
 let selectedIds = new Set(); // 다중 선택
 
@@ -137,10 +137,11 @@ function saveFilterSetting() {
 }
 
 function savePlatformFilterSetting() {
+  const value = selectedPlatforms.size === 0 ? "" : [...selectedPlatforms].join(",");
   fetch(`/api/settings/${PLATFORM_FILTER_KEY}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value: selectedPlatform || "" }),
+    body: JSON.stringify({ value }),
   }).catch(() => {});
 }
 
@@ -148,7 +149,8 @@ async function loadPlatformFilterSetting() {
   try {
     const res = await fetch(`/api/settings/${PLATFORM_FILTER_KEY}`);
     const data = await res.json();
-    selectedPlatform = data.value || null;
+    const parts = (data.value || "").split(",").filter(Boolean);
+    selectedPlatforms = new Set(parts);
   } catch (e) {
     // 못 받아와도 기본값(전체)으로 계속 진행
   }
@@ -197,10 +199,13 @@ function renderFilterTabs() {
 
     for (const platform of [...platformSet].sort((a, b) => a.localeCompare(b, "ko"))) {
       const btn = document.createElement("button");
-      btn.className = "filter-tab platform-filter-tab" + (selectedPlatform === platform ? " active" : "");
+      btn.className = "filter-tab platform-filter-tab" + (selectedPlatforms.has(platform) ? " active" : "");
       btn.textContent = platform;
       btn.addEventListener("click", () => {
-        selectedPlatform = selectedPlatform === platform ? null : platform;
+        if (selectedPlatforms.has(platform)) selectedPlatforms.delete(platform);
+        else selectedPlatforms.add(platform);
+        // 전체 플랫폼을 다 선택한 상태는 "전체"와 같으므로 자연스럽게 합쳐줌
+        if (selectedPlatforms.size === platformSet.size) selectedPlatforms = new Set();
         renderFilterTabs();
         render();
         savePlatformFilterSetting();
@@ -217,15 +222,15 @@ function render() {
   if (selectedStatuses.size > 0) {
     filtered = filtered.filter((s) => selectedStatuses.has(seriesStatus(s)));
   }
-  if (selectedPlatform) {
-    filtered = filtered.filter((s) => s.platform === selectedPlatform);
+  if (selectedPlatforms.size > 0) {
+    filtered = filtered.filter((s) => selectedPlatforms.has(s.platform));
   }
   const list = sortSeries(filtered);
 
   if (!list.length) {
     const msg = q
       ? "검색 결과가 없습니다."
-      : selectedStatuses.size > 0 || selectedPlatform
+      : selectedStatuses.size > 0 || selectedPlatforms.size > 0
       ? "해당하는 웹툰이 없습니다."
       : "스캔된 웹툰이 없습니다.<br>라이브러리 폴더를 확인해주세요.";
     grid.innerHTML = `<div class="empty-state">${msg}</div>`;

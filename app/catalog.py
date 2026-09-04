@@ -8,7 +8,7 @@
 
 from datetime import datetime
 
-_state = {"series": {}, "chapters": {}, "last_scan_at": None}
+_state = {"series": {}, "chapters": {}, "last_scan_at": None, "folder_refs": {}}
 
 
 def get_series_map() -> dict:
@@ -48,6 +48,58 @@ def diff_and_replace(series_map: dict, chapters_map: dict) -> tuple[int, int]:
     removed = len(prev_ids - new_ids)
     replace(series_map, chapters_map)
     return added, removed
+
+
+def merge_platform(platform: str, series_map: dict, chapters_map: dict, folder_refs: list[str]) -> None:
+    """
+    플랫폼 하나만 새로 스캔한 결과를 반영한다. 다른 플랫폼의 기존 항목은 안 건드리고,
+    이 플랫폼 소속 항목만 통째로 교체한다 - 로컬을 먼저 반영하고 네트워크 드라이브는
+    나중에 반영해도, 그 사이에 로컬 목록이 먼저 화면에 뜰 수 있게 하기 위함이다.
+    """
+    old_chapter_ids_for_platform = set()
+    kept_series = {}
+    for sid, s in _state["series"].items():
+        if s["platform"] == platform:
+            old_chapter_ids_for_platform.update(ch["id"] for ch in s["chapters"])
+        else:
+            kept_series[sid] = s
+
+    kept_chapters = {
+        cid: path for cid, path in _state["chapters"].items()
+        if cid not in old_chapter_ids_for_platform
+    }
+
+    kept_series.update(series_map)
+    kept_chapters.update(chapters_map)
+
+    _state["series"] = kept_series
+    _state["chapters"] = kept_chapters
+    _state["folder_refs"][platform] = folder_refs
+    _state["last_scan_at"] = datetime.now()
+
+
+def remove_series(series_id: str) -> None:
+    """시리즈 하나를 카탈로그에서 즉시 뺀다(제외 처리 - 재스캔 없이 바로 반영하기 위함)."""
+    series = _state["series"].pop(series_id, None)
+    if series:
+        for chapter in series["chapters"]:
+            _state["chapters"].pop(chapter["id"], None)
+
+
+def add_series(series_entry: dict, chapters_map: dict) -> None:
+    """시리즈 하나를 카탈로그에 즉시 추가한다(재포함 처리 - 전체 재스캔 없이 바로 반영)."""
+    _state["series"][series_entry["id"]] = series_entry
+    _state["chapters"].update(chapters_map)
+
+
+def get_all_folder_refs() -> list[tuple[str, str]]:
+    """설정 패널의 "스캔 중/제외된 폴더" 목록용 - 마지막 스캔 때 이미 훑어둔 결과를
+    그대로 재사용한다(요청마다 디스크를 다시 훑지 않기 위함)."""
+    result = []
+    for platform, refs in _state["folder_refs"].items():
+        for ref in refs:
+            result.append((platform, ref))
+    return result
 
 
 def find_chapter_position(chapter_id: str) -> tuple[dict | None, int | None]:
