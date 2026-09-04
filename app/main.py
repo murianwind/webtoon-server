@@ -289,7 +289,7 @@ def lookup_latest(series: str, platform: str | None = None):
 
 
 @app.get("/api/series/{series_id}/continue")
-def continue_reading(series_id: str):
+async def continue_reading(series_id: str):
     """이 시리즈를 열었을 때 바로 이동해야 할 (회차, 페이지) 반환."""
     series = catalog.get_series(series_id)
     if not series:
@@ -301,7 +301,10 @@ def continue_reading(series_id: str):
     if prog:
         idx = next((i for i, ch in enumerate(series["chapters"]) if ch["id"] == prog["chapter_id"]), None)
         if idx is not None:
-            page_count = len(scan.list_zip_image_names(series["chapters"][idx]["path"]))
+            # zip을 열어 페이지 수를 세는 건 네트워크 드라이브(원드라이브 등)에서 캐시가
+            # 안 되어 있으면 느릴 수 있는 블로킹 작업이라, to_thread로 넘겨서 그 사이
+            # 다른 요청까지 같이 멈추지 않게 한다.
+            page_count = len(await asyncio.to_thread(scan.list_zip_image_names, series["chapters"][idx]["path"]))
             # 저장된 page_index가 실제 페이지 수 이상이면 "이 회차는 다 읽음" 신호 ->
             # 다음 화가 있으면 그쪽으로, 없으면(마지막 화) 마지막 페이지로 보정
             if prog["page_index"] >= page_count and idx + 1 < len(series["chapters"]):
@@ -320,7 +323,7 @@ class ProgressIn(BaseModel):
 
 
 @app.put("/api/series/{series_id}/progress")
-def save_progress(series_id: str, body: ProgressIn):
+async def save_progress(series_id: str, body: ProgressIn):
     series = catalog.get_series(series_id)
     if not series:
         raise HTTPException(404, "series not found")
@@ -337,8 +340,8 @@ def save_progress(series_id: str, body: ProgressIn):
         # 마지막 화는 무한스크롤로 "다음 화에 진입"하는 신호가 절대 발생하지 않아서,
         # 그것만 보고 있으면 아무리 끝까지 읽어도 영원히 "읽는 중"에 머무르게 된다.
         # 그래서 마지막 화에 한해서는, 실제로 마지막 페이지까지 도달했으면 그 자체를
-        # 완독으로 인정한다.
-        page_count = len(scan.list_zip_image_names(chapters[idx]["path"]))
+        # 완독으로 인정한다. (to_thread 이유는 continue_reading과 동일)
+        page_count = len(await asyncio.to_thread(scan.list_zip_image_names, chapters[idx]["path"]))
         if page_count > 0 and body.page_index >= page_count - 1:
             db.mark_chapters_read(series_id, [chapters[idx]["id"]])
             db.set_progress(series_id, body.chapter_id, idx, db.PAGE_FINISHED_SENTINEL)
@@ -497,7 +500,7 @@ def series_info(series_id: str):
 
 
 @app.get("/api/series/{series_id}/cover")
-def series_cover(series_id: str):
+async def series_cover(series_id: str):
     series = catalog.get_series(series_id)
     if not series:
         raise HTTPException(404, "no cover")
@@ -512,13 +515,17 @@ def series_cover(series_id: str):
         if cached:
             data, media_type = cached
         else:
-            data, media_type = covers.generate_and_cache_cover_from_file(series_id, source_mtime, cover_path)
+            # 네트워크 드라이브면 파일을 읽어서 리사이즈하는 데 시간이 걸릴 수 있으니
+            # to_thread로 넘겨서 그 사이 다른 요청까지 같이 멈추지 않게 한다.
+            data, media_type = await asyncio.to_thread(
+                covers.generate_and_cache_cover_from_file, series_id, source_mtime, cover_path
+            )
         return Response(content=data, media_type=media_type)
 
     if not series["chapters"]:
         raise HTTPException(404, "no cover")
     first_chapter = series["chapters"][0]
-    names = scan.list_zip_image_names(first_chapter["path"])
+    names = await asyncio.to_thread(scan.list_zip_image_names, first_chapter["path"])
     if not names:
         raise HTTPException(404, "no cover image")
 
@@ -531,8 +538,9 @@ def series_cover(series_id: str):
     if cached:
         data, media_type = cached
     else:
-        data, media_type = covers.generate_and_cache_cover_from_zip(
-            series_id, source_mtime, first_chapter["path"], names[0]
+        data, media_type = await asyncio.to_thread(
+            covers.generate_and_cache_cover_from_zip,
+            series_id, source_mtime, first_chapter["path"], names[0],
         )
 
     return Response(content=data, media_type=media_type)
@@ -620,16 +628,16 @@ async def import_backup(body: RestorePayload):
 
 
 @app.get("/api/chapters/{chapter_id}/pages")
-def chapter_pages(chapter_id: str):
+async def chapter_pages(chapter_id: str):
     zip_path = catalog.get_chapter_zip_path(chapter_id)
     if not zip_path:
         raise HTTPException(404, "chapter not found")
-    names = scan.list_zip_image_names(zip_path)
+    names = await asyncio.to_thread(scan.list_zip_image_names, zip_path)
     return {"page_count": len(names)}
 
 
 @app.get("/api/chapters/{chapter_id}/overlap")
-def chapter_overlap(chapter_id: str):
+async def chapter_overlap(chapter_id: str):
     """
     이 회차 맨 앞부분이 바로 이전 회차(같은 시리즈, 정렬상 직전) 끝부분과 겹치는
     페이지 수를 반환. 결과는 DB에 캐싱되어 다음부터는 즉시 응답한다.
@@ -650,26 +658,39 @@ def chapter_overlap(chapter_id: str):
     if cached is not None:
         return {"skip_pages": cached}
 
-    skip_pages = overlap.compute_overlap_pages(prev_chapter["path"], zip_path)
+    # 이미지 두 장의 zip을 열어 비교하는 무거운 작업 - 네트워크 드라이브면 특히 오래 걸릴
+    # 수 있어 to_thread로 넘긴다.
+    skip_pages = await asyncio.to_thread(overlap.compute_overlap_pages, prev_chapter["path"], zip_path)
     db.set_cached_overlap(chapter_id, prev_chapter["id"], skip_pages)
     if skip_pages > 0:
         log.info(f"화 전환 겹침 감지: {chapter_id} 앞부분 {skip_pages}페이지가 이전 화와 중복 (자동 건너뜀)")
     return {"skip_pages": skip_pages}
 
 
-@app.get("/api/chapters/{chapter_id}/pages/{page_index}")
-def chapter_page(chapter_id: str, page_index: int):
-    zip_path = catalog.get_chapter_zip_path(chapter_id)
-    if not zip_path:
-        raise HTTPException(404, "chapter not found")
+def _read_chapter_page_bytes(zip_path: str, page_index: int) -> tuple[bytes, str] | None:
+    """스레드에서 실행되는 부분: zip 목록 조회 + 실제 페이지 바이트 읽기를 한 번에 처리."""
     names = scan.list_zip_image_names(zip_path)
     if page_index < 0 or page_index >= len(names):
-        raise HTTPException(404, "page not found")
+        return None
     name = names[page_index]
     ext = os.path.splitext(name)[1].lower()
     with zipfile.ZipFile(zip_path) as zf:
         data = zf.read(name)
-    return Response(content=data, media_type=covers.IMAGE_MEDIA_TYPES.get(ext, "application/octet-stream"))
+    return data, covers.IMAGE_MEDIA_TYPES.get(ext, "application/octet-stream")
+
+
+@app.get("/api/chapters/{chapter_id}/pages/{page_index}")
+async def chapter_page(chapter_id: str, page_index: int):
+    zip_path = catalog.get_chapter_zip_path(chapter_id)
+    if not zip_path:
+        raise HTTPException(404, "chapter not found")
+    # 실제로 이미지 데이터를 읽는 부분 - 리더가 스크롤하면서 계속 호출하는 가장 빈번한
+    # 요청이라, 네트워크 드라이브에서 블로킹되면 영향이 제일 크다. to_thread로 넘긴다.
+    result = await asyncio.to_thread(_read_chapter_page_bytes, zip_path, page_index)
+    if result is None:
+        raise HTTPException(404, "page not found")
+    data, media_type = result
+    return Response(content=data, media_type=media_type)
 
 
 # ---------------------------------------------------------------------------
