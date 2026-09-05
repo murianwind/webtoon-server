@@ -101,17 +101,6 @@ def get_progress(series_id: str) -> dict | None:
     return {"chapter_id": row[0], "chapter_index": row[1], "page_index": row[2]}
 
 
-def get_all_progress() -> dict:
-    with db_connection() as conn:
-        rows = conn.execute(
-            "SELECT series_id, chapter_id, chapter_index, page_index FROM progress"
-        ).fetchall()
-    return {
-        row[0]: {"chapter_id": row[1], "chapter_index": row[2], "page_index": row[3]}
-        for row in rows
-    }
-
-
 def set_progress(series_id: str, chapter_id: str, chapter_index: int, page_index: int) -> None:
     with db_connection() as conn:
         conn.execute(
@@ -133,16 +122,6 @@ def delete_progress(series_id: str) -> None:
     with db_connection() as conn:
         conn.execute("DELETE FROM progress WHERE series_id = ?", (series_id,))
         conn.commit()
-
-
-def apply_read_boundary(series_id: str, chapters: list, boundary_index: int) -> None:
-    """boundary_index번째 회차까지(포함) 읽음으로 표시. 음수면 전부 안읽음(진행률 삭제)."""
-    if boundary_index < 0:
-        delete_progress(series_id)
-        return
-    boundary_index = min(boundary_index, len(chapters) - 1)
-    chapter = chapters[boundary_index]
-    set_progress(series_id, chapter["id"], boundary_index, PAGE_FINISHED_SENTINEL)
 
 
 # ---------------------------------------------------------------------------

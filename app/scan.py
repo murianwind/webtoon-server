@@ -264,38 +264,6 @@ def iter_platform_series_streaming(platform: str):
             yield series_ref, None, None
 
 
-def list_platform_series_refs(platform: str) -> list[str]:
-    """
-    플랫폼 폴더 안의 시리즈 후보 경로를 전부(제외 여부와 무관하게) 나열한다. 설정 패널의
-    "스캔 중/제외된 폴더" 목록을 만드는 데 쓴다 - 이 목록 자체는 화면에 보여주기만 할 뿐
-    실제 회차 스캔은 안 하니, 값이 좀 걸려도(네트워크 드라이브 폴더가 아주 많은 경우)
-    전체 스캔 파이프라인을 막지는 않는다(호출하는 쪽에서 타임아웃을 씌워 쓴다).
-    """
-    platform_path = os.path.join(LIBRARY_ROOT, platform)
-    if not os.path.isdir(platform_path):
-        return []
-    found = []
-    for dirpath, dirnames, filenames in os.walk(platform_path):
-        dirnames.sort()
-        if any(f.lower().endswith(".zip") for f in filenames):
-            found.append(os.path.relpath(dirpath, platform_path).replace(os.sep, "/"))
-            dirnames.clear()
-    found.sort()
-    return found
-
-
-def scan_library() -> tuple[dict, dict]:
-    """전체 라이브러리를 한 번에 스캔(플랫폼 우선순위 순서로 훑되, 결과는 합쳐서 반환).
-    점진적으로 반영하고 싶으면 iter_platform_series_streaming()을 플랫폼별로 쓸 것."""
-    series_map = {}
-    chapters_map = {}
-    for platform in list_platforms_in_scan_order():
-        for series_ref, series_entry, s_chapters in iter_platform_series_streaming(platform):
-            series_map[series_entry["id"]] = series_entry
-            chapters_map.update(s_chapters)
-    return series_map, chapters_map
-
-
 def list_zip_image_names(zip_path: str) -> list[str]:
     """zip 안의 이미지 파일명을 자연 정렬 순서(1,2,3...10)로 반환."""
     with zipfile.ZipFile(zip_path) as zf:

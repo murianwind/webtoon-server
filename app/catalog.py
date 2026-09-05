@@ -1,6 +1,7 @@
 """
-스캔 결과를 메모리에 담아두는 카탈로그. scan.scan_library()가 만든 (series, chapters)
-결과를 이 모듈이 보관하고, API 라우트들은 여기서 읽는다.
+스캔 결과를 메모리에 담아두는 카탈로그. scan.iter_platform_series_streaming()이 플랫폼별로
+찾아낸 시리즈들을 이 모듈이 보관하고(add_series/remove_series/prune_platform_series로
+시리즈 하나 단위로 갱신), API 라우트들은 여기서 읽는다.
 
 실제 파일시스템 스캔 로직은 scan.py에 있다 - 이 모듈은 "지금 알고 있는 상태"만 담당한다
 (단일 책임: 상태 저장/조회, 스캔 방법은 모름).
@@ -45,50 +46,6 @@ def set_known_platforms(platforms: list[str]) -> None:
 
 def get_known_platforms() -> list[str]:
     return _state["known_platforms"]
-
-
-def replace(series_map: dict, chapters_map: dict) -> None:
-    _state["series"] = series_map
-    _state["chapters"] = chapters_map
-    _state["last_scan_at"] = datetime.now()
-
-
-def diff_and_replace(series_map: dict, chapters_map: dict) -> tuple[int, int]:
-    """새 스캔 결과로 교체하면서 (추가된 시리즈 수, 제거된 시리즈 수)를 반환."""
-    prev_ids = set(_state["series"].keys())
-    new_ids = set(series_map.keys())
-    added = len(new_ids - prev_ids)
-    removed = len(prev_ids - new_ids)
-    replace(series_map, chapters_map)
-    return added, removed
-
-
-def merge_platform(platform: str, series_map: dict, chapters_map: dict, folder_refs: list[str]) -> None:
-    """
-    플랫폼 하나만 새로 스캔한 결과를 반영한다. 다른 플랫폼의 기존 항목은 안 건드리고,
-    이 플랫폼 소속 항목만 통째로 교체한다 - 로컬을 먼저 반영하고 네트워크 드라이브는
-    나중에 반영해도, 그 사이에 로컬 목록이 먼저 화면에 뜰 수 있게 하기 위함이다.
-    """
-    old_chapter_ids_for_platform = set()
-    kept_series = {}
-    for sid, s in _state["series"].items():
-        if s["platform"] == platform:
-            old_chapter_ids_for_platform.update(ch["id"] for ch in s["chapters"])
-        else:
-            kept_series[sid] = s
-
-    kept_chapters = {
-        cid: path for cid, path in _state["chapters"].items()
-        if cid not in old_chapter_ids_for_platform
-    }
-
-    kept_series.update(series_map)
-    kept_chapters.update(chapters_map)
-
-    _state["series"] = kept_series
-    _state["chapters"] = kept_chapters
-    _state["folder_refs"][platform] = folder_refs
-    _state["last_scan_at"] = datetime.now()
 
 
 def remove_series(series_id: str) -> None:
