@@ -142,28 +142,6 @@ def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
     return sort_key, label
 
 
-def _find_series_dirs(platform_path: str) -> list[tuple[str, str]]:
-    """
-    platform_path 아래를 재귀적으로 훑어서, zip 파일을 하나라도 직접 담고 있는 모든 폴더를
-    찾는다. 시리즈 폴더가 플랫폼 폴더 바로 아래(1단계)에 있든, 작가별로 한 단계 더 묶어둔
-    경우(예: 작가 폴더/시리즈 폴더)든 상관없이 zip이 직접 있는 지점을 전부 시리즈로 인식한다.
-
-    반환값은 (platform_path 기준 상대경로, 실제 절대경로) 쌍의 목록. 상대경로는 항상
-    '/'로 이어붙여서(OS 무관하게) 안정적인 식별자로 쓴다. 1단계짜리 얕은 시리즈는 상대경로가
-    곧 폴더명 그 자체라, 기존에 그렇게만 스캔되던 경우의 ID 계산과 완전히 동일하게 유지된다.
-    """
-    found = []
-    for dirpath, dirnames, filenames in os.walk(platform_path):
-        dirnames.sort()
-        has_zip = any(f.lower().endswith(".zip") for f in filenames)
-        if has_zip:
-            rel = os.path.relpath(dirpath, platform_path).replace(os.sep, "/")
-            found.append((rel, dirpath))
-            dirnames.clear()  # 시리즈 폴더로 인식된 곳 안쪽은 더 내려가지 않음(중복/오인 방지)
-    found.sort(key=lambda pair: pair[0])
-    return found
-
-
 def list_platforms_in_scan_order() -> list[str]:
     """
     스캔할 플랫폼 폴더 목록을, 로컬이 먼저 오고 네트워크 드라이브가 나중에 오도록 정렬해서
@@ -184,112 +162,19 @@ def list_platforms_in_scan_order() -> list[str]:
     return fast_platforms + slow_platforms
 
 
-def list_platform_series_refs(platform: str) -> list[str]:
+def is_slow_platform(platform: str) -> bool:
+    """SLOW_PLATFORMS 환경변수에 지정된 플랫폼인지(=네트워크 드라이브로 취급) 여부."""
+    slow = {p.strip() for p in os.environ.get("SLOW_PLATFORMS", "").split(",") if p.strip()}
+    return platform in slow
+
+
+def _scan_series_at_path(platform: str, series_ref: str, series_path: str) -> tuple[dict, dict] | None:
     """
-    플랫폼 폴더 안의 시리즈 후보 경로만 빠르게 나열한다(zip 목록을 세거나 회차를 만들지
-    않고, 폴더 존재 여부만 확인 - _find_series_dirs 자체가 이미 가벼움). 시리즈를 하나씩
-    스캔하기 전에 "총 몇 개인지, 뭐가 있는지"를 먼저 알아야 순서대로 처리할 수 있어서
-    필요하다. 설정 패널의 "스캔 중/제외된 폴더" 목록에도 그대로 재사용한다.
+    시리즈 폴더 하나의 실제 내용(회차 zip 목록, 커버, info.xml)을 읽어서
+    (series_entry, chapters_map)을 만든다. 경로가 이미 확정된 상태에서 호출한다 -
+    호출하는 쪽(발견 즉시 스캔하는 제너레이터든, 폴더 하나만 다시 스캔하는 함수든)이
+    같은 로직을 중복 없이 공유하기 위해 따로 뺀 것.
     """
-    platform_path = os.path.join(LIBRARY_ROOT, platform)
-    if not os.path.isdir(platform_path):
-        return []
-    return [ref for ref, _ in _find_series_dirs(platform_path)]
-
-
-def iter_platform_series(platform: str, series_refs: list[str]):
-    """
-    주어진 series_refs를 순서대로 하나씩 스캔해서 (series_entry, chapters_map)을 그
-    자리에서 바로 내놓는 제너레이터. 플랫폼 전체가 끝나기를 기다리지 않고 시리즈 하나가
-    끝날 때마다 즉시 화면에 반영할 수 있게 하기 위함이다(네트워크 드라이브에 시리즈가
-    많을 때, 마지막 하나가 안 끝났다고 나머지 전부가 안 보이는 걸 막기 위함).
-    """
-    excluded = db.get_excluded_series()
-    for series_ref in series_refs:
-        if (platform, series_ref) in excluded:
-            continue
-        result = scan_single_series(platform, series_ref)
-        if result:
-            yield result
-
-
-def scan_platform(platform: str) -> tuple[dict, dict, list[str]]:
-    """
-    플랫폼 폴더 하나만 스캔한다. 반환값은 (series_map, chapters_map, all_series_refs) -
-    all_series_refs는 제외 여부와 무관하게 zip이 있는 모든 폴더의 상대경로 목록으로,
-    설정 패널의 "스캔 중/제외된 폴더" 목록에 재사용하기 위한 것이다(다시 디스크를
-    훑지 않고 이 스캔 결과를 그대로 캐싱해서 쓰면 되므로).
-
-    (참고: 시리즈 하나 끝날 때마다 바로 화면에 반영하고 싶으면 이 함수 대신
-    list_platform_series_refs() + iter_platform_series()를 조합해서 쓸 것.)
-    """
-    series_map = {}
-    chapters_map = {}
-    platform_path = os.path.join(LIBRARY_ROOT, platform)
-    if not os.path.isdir(platform_path):
-        return series_map, chapters_map, []
-
-    excluded = db.get_excluded_series()
-    series_dirs = _find_series_dirs(platform_path)
-    all_series_refs = [ref for ref, _ in series_dirs]
-
-    for series_ref, series_path in series_dirs:
-        if (platform, series_ref) in excluded:
-            continue
-
-        # 화면에 보여줄 이름은 폴더명만(중간에 작가 폴더 등으로 묶여 있어도 그 부분은 안 보여줌).
-        series_name = os.path.basename(series_ref)
-
-        zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
-        if not zip_filenames:
-            continue
-
-        series_id = make_id(platform, series_ref)
-        chapters = []
-        for zip_filename in zip_filenames:
-            stem = zip_filename[:-4]
-            sort_key, label = parse_chapter_label(stem, series_name)
-            chapter_id = make_id(platform, series_ref, zip_filename)
-            full_path = os.path.join(series_path, zip_filename)
-            chapters.append(
-                {
-                    "id": chapter_id,
-                    "label": label,
-                    "sort_key": sort_key,
-                    "filename": zip_filename,
-                    "path": full_path,
-                }
-            )
-            chapters_map[chapter_id] = full_path
-
-        chapters.sort(key=lambda chapter: (chapter["sort_key"], chapter["filename"]))
-        latest_mtime = max((os.path.getmtime(chapter["path"]) for chapter in chapters), default=0)
-
-        series_map[series_id] = {
-            "id": series_id,
-            "platform": platform,
-            "title": series_name,
-            "path": series_path,
-            "chapters": chapters,
-            "latest_mtime": latest_mtime,
-            "cover_path": _find_series_cover(series_path),
-            "info": _parse_series_info(series_path),
-        }
-
-    return series_map, chapters_map, all_series_refs
-
-
-def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | None:
-    """
-    시리즈 폴더 딱 하나만 스캔한다(제외했다가 다시 포함시킬 때, 플랫폼 전체를 다시
-    스캔할 필요 없이 이 폴더 하나만 반영하기 위함). 반환값은 (series_entry, chapters_map)
-    이거나, 폴더가 없거나 zip이 없으면 None.
-    """
-    platform_path = os.path.join(LIBRARY_ROOT, platform)
-    series_path = os.path.join(platform_path, *series_ref.split("/"))
-    if not os.path.isdir(series_path):
-        return None
-
     series_name = os.path.basename(series_ref)
     zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
     if not zip_filenames:
@@ -330,15 +215,84 @@ def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | No
     return series_entry, chapters_map
 
 
+def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | None:
+    """
+    시리즈 폴더 딱 하나만 스캔한다(제외했다가 다시 포함시킬 때, 플랫폼 전체를 다시
+    스캔할 필요 없이 이 폴더 하나만 반영하기 위함). 반환값은 (series_entry, chapters_map)
+    이거나, 폴더가 없거나 zip이 없으면 None. (재포함 액션 전용이라 제외 목록 확인을
+    일부러 안 한다 - 호출하는 쪽에서 "방금 제외를 풀었다"는 걸 이미 알고 부르는 것이므로.)
+    """
+    platform_path = os.path.join(LIBRARY_ROOT, platform)
+    series_path = os.path.join(platform_path, *series_ref.split("/"))
+    if not os.path.isdir(series_path):
+        return None
+    return _scan_series_at_path(platform, series_ref, series_path)
+
+
+def iter_platform_series_streaming(platform: str):
+    """
+    플랫폼 폴더를 훑으면서, 시리즈 폴더를 "발견하는 즉시"(전체 폴더 구조를 다 훑기를
+    기다리지 않고) 그 자리에서 스캔까지 마쳐서 (series_ref, series_entry, chapters_map)을
+    하나씩 내놓는 제너레이터다. "폴더 목록을 전부 모은 뒤에 하나씩 스캔"이 아니라
+    "발견 하나당 스캔 하나"라서, 네트워크 드라이브에 폴더가 아주 많아도 첫 번째 결과가
+    나오기까지 전체 탐색이 끝나길 기다릴 필요가 없다.
+
+    제외된 (platform, series_ref) 조합은 실제 내용(zip 목록 등)은 절대 열어보지 않지만,
+    "이런 폴더가 있다"는 것 자체는 여전히 알려줘야 설정 패널의 "제외된 폴더" 목록에서
+    다시 포함시킬 수 있다 - 그래서 series_entry/chapters_map을 None으로 해서 yield한다
+    (호출하는 쪽에서 series_entry가 None이면 "발견은 했지만 스캔은 안 함"으로 처리할 것).
+    """
+    platform_path = os.path.join(LIBRARY_ROOT, platform)
+    if not os.path.isdir(platform_path):
+        return
+    excluded = db.get_excluded_series()
+    for dirpath, dirnames, filenames in os.walk(platform_path):
+        dirnames.sort()
+        has_zip = any(f.lower().endswith(".zip") for f in filenames)
+        if not has_zip:
+            continue
+        dirnames.clear()  # 시리즈 폴더로 인식된 곳 안쪽은 더 내려가지 않음(중복/오인 방지)
+        series_ref = os.path.relpath(dirpath, platform_path).replace(os.sep, "/")
+        if (platform, series_ref) in excluded:
+            yield series_ref, None, None
+            continue
+        result = _scan_series_at_path(platform, series_ref, dirpath)
+        if result:
+            series_entry, chapters_map = result
+            yield series_ref, series_entry, chapters_map
+        else:
+            yield series_ref, None, None
+
+
+def list_platform_series_refs(platform: str) -> list[str]:
+    """
+    플랫폼 폴더 안의 시리즈 후보 경로를 전부(제외 여부와 무관하게) 나열한다. 설정 패널의
+    "스캔 중/제외된 폴더" 목록을 만드는 데 쓴다 - 이 목록 자체는 화면에 보여주기만 할 뿐
+    실제 회차 스캔은 안 하니, 값이 좀 걸려도(네트워크 드라이브 폴더가 아주 많은 경우)
+    전체 스캔 파이프라인을 막지는 않는다(호출하는 쪽에서 타임아웃을 씌워 쓴다).
+    """
+    platform_path = os.path.join(LIBRARY_ROOT, platform)
+    if not os.path.isdir(platform_path):
+        return []
+    found = []
+    for dirpath, dirnames, filenames in os.walk(platform_path):
+        dirnames.sort()
+        if any(f.lower().endswith(".zip") for f in filenames):
+            found.append(os.path.relpath(dirpath, platform_path).replace(os.sep, "/"))
+            dirnames.clear()
+    found.sort()
+    return found
+
+
 def scan_library() -> tuple[dict, dict]:
     """전체 라이브러리를 한 번에 스캔(플랫폼 우선순위 순서로 훑되, 결과는 합쳐서 반환).
-    점진적으로 반영하고 싶으면 scan_platform()을 플랫폼별로 직접 호출할 것."""
+    점진적으로 반영하고 싶으면 iter_platform_series_streaming()을 플랫폼별로 쓸 것."""
     series_map = {}
     chapters_map = {}
     for platform in list_platforms_in_scan_order():
-        p_series, p_chapters, _ = scan_platform(platform)
-        series_map.update(p_series)
-        chapters_map.update(p_chapters)
+        for series_ref, series_entry, s_chapters in iter_platform_series_streaming(platform):
+            series_map[series_entry["id"]] = series_entry
+            chapters_map.update(s_chapters)
     return series_map, chapters_map
 
 

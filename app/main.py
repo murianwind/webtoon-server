@@ -11,6 +11,7 @@ webtoon-server FastAPI 앱.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -34,6 +35,29 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 RESCAN_INTERVAL_SECONDS = int(os.environ.get("RESCAN_INTERVAL_SECONDS", "7200"))
 
 BACKUP_VERSION = 2  # v2부터 read_chapters(회차별 명시 읽음 기록) 포함
+
+# SLOW_PLATFORMS(네트워크 드라이브)로 지정된 플랫폼의 파일 I/O는 이 전용 스레드풀로만
+# 보낸다. asyncio.to_thread()가 쓰는 기본 스레드풀은 앱 전체가 공유하는 자원이라, 응답
+# 없는 네트워크 호출 하나가 스레드를 계속 붙잡고 있으면(타임아웃으로 "기다리는 걸
+# 포기"해도 그 스레드 자체는 여전히 멈춰있을 수 있음) 그 풀을 나눠 쓰는 로컬 파일
+# 읽기까지 차례를 못 받아 전체 서비스가 느려진다. 완전히 분리된 풀을 쓰면, 네트워크
+# 쪽이 전부 막혀버려도 로컬 쪽 작업은 전혀 영향을 안 받는다.
+_NETWORK_IO_WORKERS = int(os.environ.get("NETWORK_IO_WORKERS", "4"))
+_network_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=_NETWORK_IO_WORKERS, thread_name_prefix="network-io"
+)
+
+
+async def run_platform_io(platform: str, func, *args):
+    """
+    platform이 SLOW_PLATFORMS(네트워크 드라이브)면 격리된 전용 스레드풀로, 아니면
+    평소처럼 asyncio.to_thread()(기본 스레드풀)로 보낸다.
+    """
+    if scan.is_slow_platform(platform):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(_network_executor, func, *args)
+    return await asyncio.to_thread(func, *args)
+
 
 import re
 
@@ -107,31 +131,72 @@ def _log_scan_result(prefix: str, series_map: dict, chapters_map: dict, added: i
         log.info(f"{prefix} - 변경 없음 (시리즈 {len(series_map)}개, 회차 {len(chapters_map)}개)")
 
 
+SERIES_SCAN_TIMEOUT_SECONDS = int(os.environ.get("SERIES_SCAN_TIMEOUT_SECONDS", "30"))
+
+
+def _advance_generator(gen):
+    """제너레이터를 한 칸 진행시켜서 다음 값을 반환하거나, 끝났으면 None을 반환한다.
+    스레드에서 실행하기 위한 평범한 동기 함수(제너레이터 자체는 동기 코드이므로)."""
+    return next(gen, None)
+
+
 async def _scan_all_platforms_incrementally() -> tuple[dict, dict]:
     """
-    플랫폼을 하나씩(로컬 먼저, 네트워크 드라이브는 나중에) 스캔하고, 그 플랫폼 안에서도
-    시리즈를 하나씩 스캔해서 끝나는 대로 즉시 카탈로그에 반영한다. 시리즈 하나 끝날 때마다
-    바로 반영하는 이유는, 네트워크 드라이브에 시리즈가 많을 때 마지막 하나가 안 끝났다는
-    이유로 나머지 전부가 안 보이는 걸 막기 위함이다.
+    플랫폼을 하나씩(로컬 먼저, 네트워크 드라이브는 나중에) 스캔한다. 플랫폼 안에서도
+    "폴더 구조를 전부 훑고 나서 하나씩 스캔"이 아니라 "폴더 하나를 발견하는 즉시 그
+    자리에서 스캔해서 반영"하는 스트리밍 방식이다 - 네트워크 드라이브에 폴더가 아주
+    많으면 "폴더 구조 전체를 훑는 것" 자체가 오래 걸릴 수 있는데, 그걸 다 기다렸다가
+    스캔을 시작하면 첫 결과가 나오기까지도 그만큼 오래 걸리기 때문이다.
+
+    시리즈 하나(정확히는 "다음 항목을 찾는 것")가 응답 없이 멈춰버리면 시간 제한을 걸어
+    포기하고 그 플랫폼의 나머지는 다음 재스캔에서 이어서 시도한다. (이 시간 제한은
+    asyncio 쪽에서 "기다리는 걸 그만두는" 것이라, 정말로 응답이 안 오는 네트워크 호출
+    자체는 스레드 안에서 계속 멈춰있을 수 있다 - 그래서 네트워크 플랫폼의 파일 I/O는
+    run_platform_io()로 로컬과 격리된 전용 스레드풀에 보내서, 이런 일이 반복돼도 로컬
+    플랫폼 작업까지 덩달아 느려지지 않게 한다.)
     """
     platforms = await asyncio.to_thread(scan.list_platforms_in_scan_order)
     # 폴더 이름만 훑는 거라 거의 즉시 끝남 - 실제 시리즈 스캔이 끝나기 전에 먼저 기록해둬서,
     # 프론트엔드가 "이런 플랫폼이 있다"를 미리 보여줄 수 있게 한다(플랫폼 필터 탭 등).
     catalog.set_known_platforms(platforms)
-    for platform in platforms:
-        series_refs = await asyncio.to_thread(scan.list_platform_series_refs, platform)
-        catalog.set_platform_folder_refs(platform, series_refs)
 
+    for platform in platforms:
+        gen = scan.iter_platform_series_streaming(platform)
         seen_ids = set()
-        for series_ref in series_refs:
-            result = await asyncio.to_thread(scan.scan_single_series, platform, series_ref)
-            if result:
-                series_entry, chapters_map = result
+        seen_refs = []
+        completed = False
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    run_platform_io(platform, _advance_generator, gen),
+                    timeout=SERIES_SCAN_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                log.warning(
+                    f"'{platform}' 탐색 중 한 항목이 {SERIES_SCAN_TIMEOUT_SECONDS}초를 넘겨 "
+                    f"이번 스캔은 여기서 중단 (마운트 상태 확인 필요, 다음 재스캔에서 처음부터 재시도됨)"
+                )
+                break
+            except Exception:
+                log.exception(f"'{platform}' 탐색 중 오류 발생 - 이번 스캔은 여기서 중단")
+                break
+            if item is None:
+                completed = True  # 이 플랫폼은 끝까지 다 훑었음(중단이 아니라)
+                break
+            series_ref, series_entry, chapters_map = item
+            seen_refs.append(series_ref)  # 제외된 폴더도 "발견됨" 자체는 계속 기록(설정 패널용)
+            catalog.set_platform_folder_refs(platform, list(seen_refs))
+            if series_entry:  # 제외되지 않아서 실제로 스캔된 경우만 카탈로그에 반영
                 catalog.add_series(series_entry, chapters_map)
                 seen_ids.add(series_entry["id"])
-        # 이번 스캔에서 다시 나타나지 않은(삭제되었거나 새로 제외된) 기존 시리즈는 정리
-        catalog.prune_platform_series(platform, seen_ids)
-        log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(seen_ids)}개, 하나씩 즉시 반영됨)")
+
+        # 이번 스캔에서 다시 나타나지 않은(삭제되었거나 새로 제외된) 기존 시리즈는 정리.
+        # 중간에 타임아웃/오류로 멈췄다면 seen_ids가 이번에 실제로 확인된 것까지만 담고
+        # 있어서, 아직 못 훑은 뒷부분의 기존 시리즈까지 정리해버리면 안 되므로, 끝까지
+        # 완주했을 때만(completed) 안전하게 정리한다.
+        if completed:
+            catalog.prune_platform_series(platform, seen_ids)
+        log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(seen_ids)}개, 폴더 발견 즉시 반영됨)")
     return catalog.get_series_map(), catalog.get_chapters_map()
 
 
@@ -246,7 +311,7 @@ async def include_series_folder(body: SeriesFolderRef):
     excluded.discard((body.platform, body.series))
     db.set_excluded_series(excluded)
 
-    result = await asyncio.to_thread(scan.scan_single_series, body.platform, body.series)
+    result = await run_platform_io(body.platform, scan.scan_single_series, body.platform, body.series)
     if result:
         series_entry, chapters_map = result
         catalog.add_series(series_entry, chapters_map)
@@ -340,9 +405,10 @@ async def continue_reading(series_id: str):
         idx = next((i for i, ch in enumerate(series["chapters"]) if ch["id"] == prog["chapter_id"]), None)
         if idx is not None:
             # zip을 열어 페이지 수를 세는 건 네트워크 드라이브(원드라이브 등)에서 캐시가
-            # 안 되어 있으면 느릴 수 있는 블로킹 작업이라, to_thread로 넘겨서 그 사이
-            # 다른 요청까지 같이 멈추지 않게 한다.
-            page_count = len(await asyncio.to_thread(scan.list_zip_image_names, series["chapters"][idx]["path"]))
+            # 안 되어 있으면 느릴 수 있는 블로킹 작업이다. run_platform_io로 넘겨서,
+            # 이 플랫폼이 네트워크 드라이브면 격리된 전용 스레드풀로 보내(로컬 작업까지
+            # 덩달아 느려지지 않게), 그게 아니면 평소처럼 기본 스레드풀로 보낸다.
+            page_count = len(await run_platform_io(series["platform"], scan.list_zip_image_names, series["chapters"][idx]["path"]))
             # 저장된 page_index가 실제 페이지 수 이상이면 "이 회차는 다 읽음" 신호 ->
             # 다음 화가 있으면 그쪽으로, 없으면(마지막 화) 마지막 페이지로 보정
             if prog["page_index"] >= page_count and idx + 1 < len(series["chapters"]):
@@ -378,8 +444,8 @@ async def save_progress(series_id: str, body: ProgressIn):
         # 마지막 화는 무한스크롤로 "다음 화에 진입"하는 신호가 절대 발생하지 않아서,
         # 그것만 보고 있으면 아무리 끝까지 읽어도 영원히 "읽는 중"에 머무르게 된다.
         # 그래서 마지막 화에 한해서는, 실제로 마지막 페이지까지 도달했으면 그 자체를
-        # 완독으로 인정한다. (to_thread 이유는 continue_reading과 동일)
-        page_count = len(await asyncio.to_thread(scan.list_zip_image_names, chapters[idx]["path"]))
+        # 완독으로 인정한다. (run_platform_io 이유는 continue_reading과 동일)
+        page_count = len(await run_platform_io(series["platform"], scan.list_zip_image_names, chapters[idx]["path"]))
         if page_count > 0 and body.page_index >= page_count - 1:
             db.mark_chapters_read(series_id, [chapters[idx]["id"]])
             db.set_progress(series_id, body.chapter_id, idx, db.PAGE_FINISHED_SENTINEL)
@@ -542,11 +608,12 @@ async def series_cover(series_id: str):
     series = catalog.get_series(series_id)
     if not series:
         raise HTTPException(404, "no cover")
+    platform = series["platform"]
 
     cover_path = series.get("cover_path")
-    if cover_path and os.path.isfile(cover_path):
+    if cover_path and await run_platform_io(platform, os.path.isfile, cover_path):
         try:
-            source_mtime = os.path.getmtime(cover_path)
+            source_mtime = await run_platform_io(platform, os.path.getmtime, cover_path)
         except OSError:
             source_mtime = 0
         cached = covers.get_cached_cover(series_id, source_mtime)
@@ -554,21 +621,21 @@ async def series_cover(series_id: str):
             data, media_type = cached
         else:
             # 네트워크 드라이브면 파일을 읽어서 리사이즈하는 데 시간이 걸릴 수 있으니
-            # to_thread로 넘겨서 그 사이 다른 요청까지 같이 멈추지 않게 한다.
-            data, media_type = await asyncio.to_thread(
-                covers.generate_and_cache_cover_from_file, series_id, source_mtime, cover_path
+            # run_platform_io로 넘겨서, 그 사이 다른(특히 로컬) 요청까지 같이 멈추지 않게 한다.
+            data, media_type = await run_platform_io(
+                platform, covers.generate_and_cache_cover_from_file, series_id, source_mtime, cover_path
             )
         return Response(content=data, media_type=media_type)
 
     if not series["chapters"]:
         raise HTTPException(404, "no cover")
     first_chapter = series["chapters"][0]
-    names = await asyncio.to_thread(scan.list_zip_image_names, first_chapter["path"])
+    names = await run_platform_io(platform, scan.list_zip_image_names, first_chapter["path"])
     if not names:
         raise HTTPException(404, "no cover image")
 
     try:
-        source_mtime = os.path.getmtime(first_chapter["path"])
+        source_mtime = await run_platform_io(platform, os.path.getmtime, first_chapter["path"])
     except OSError:
         source_mtime = 0
 
@@ -576,7 +643,8 @@ async def series_cover(series_id: str):
     if cached:
         data, media_type = cached
     else:
-        data, media_type = await asyncio.to_thread(
+        data, media_type = await run_platform_io(
+            platform,
             covers.generate_and_cache_cover_from_zip,
             series_id, source_mtime, first_chapter["path"], names[0],
         )
@@ -670,7 +738,9 @@ async def chapter_pages(chapter_id: str):
     zip_path = catalog.get_chapter_zip_path(chapter_id)
     if not zip_path:
         raise HTTPException(404, "chapter not found")
-    names = await asyncio.to_thread(scan.list_zip_image_names, zip_path)
+    series, _ = catalog.find_chapter_position(chapter_id)
+    platform = series["platform"] if series else ""
+    names = await run_platform_io(platform, scan.list_zip_image_names, zip_path)
     return {"page_count": len(names)}
 
 
@@ -697,8 +767,9 @@ async def chapter_overlap(chapter_id: str):
         return {"skip_pages": cached}
 
     # 이미지 두 장의 zip을 열어 비교하는 무거운 작업 - 네트워크 드라이브면 특히 오래 걸릴
-    # 수 있어 to_thread로 넘긴다.
-    skip_pages = await asyncio.to_thread(overlap.compute_overlap_pages, prev_chapter["path"], zip_path)
+    # 수 있어 격리된 스레드풀로 넘긴다.
+    platform = series["platform"]
+    skip_pages = await run_platform_io(platform, overlap.compute_overlap_pages, prev_chapter["path"], zip_path)
     db.set_cached_overlap(chapter_id, prev_chapter["id"], skip_pages)
     if skip_pages > 0:
         log.info(f"화 전환 겹침 감지: {chapter_id} 앞부분 {skip_pages}페이지가 이전 화와 중복 (자동 건너뜀)")
@@ -723,8 +794,12 @@ async def chapter_page(chapter_id: str, page_index: int):
     if not zip_path:
         raise HTTPException(404, "chapter not found")
     # 실제로 이미지 데이터를 읽는 부분 - 리더가 스크롤하면서 계속 호출하는 가장 빈번한
-    # 요청이라, 네트워크 드라이브에서 블로킹되면 영향이 제일 크다. to_thread로 넘긴다.
-    result = await asyncio.to_thread(_read_chapter_page_bytes, zip_path, page_index)
+    # 요청이다. 네트워크 드라이브의 회차를 읽을 때 이게 막히면 서비스 전체 체감 지연이
+    # 제일 커서, 반드시 격리된 전용 스레드풀(run_platform_io)로 보내 로컬 회차 열람에는
+    # 절대 영향이 없게 한다.
+    series, _ = catalog.find_chapter_position(chapter_id)
+    platform = series["platform"] if series else ""
+    result = await run_platform_io(platform, _read_chapter_page_bytes, zip_path, page_index)
     if result is None:
         raise HTTPException(404, "page not found")
     data, media_type = result
