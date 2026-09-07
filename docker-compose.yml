@@ -31,6 +31,9 @@ services:
       - "TZ=Asia/Seoul"                                  # 로그/재스캔 시각을 한국 시간 기준으로
       - "PUBLIC_BASE_URL="                               # <-- 여기 수정(선택): 외부 알림 링크가 필요할 때만 도메인 입력
       - "RESCAN_INTERVAL_SECONDS=7200"                   # <-- 여기 수정(선택): 자동 재스캔 주기(초)
+      # - "SLOW_PLATFORMS=gdrive"                        # <-- 클라우드 드라이브 예시(선택): 콤마로 구분한 플랫폼
+      #                                                   #     태그명(예: gdrive,onedrive). 이 목록에 있는 플랫폼은
+      #                                                   #     항상 로컬보다 나중에 스캔됩니다.
     volumes:
       - "/path/to/your/naver-webtoons:/library/naver"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그
       - "/path/to/your/kakao-webtoons:/library/kakao"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그
