@@ -68,17 +68,25 @@ _CACHEABLE_IMAGE_PATH = re.compile(r"^/api/series/[^/]+/cover$|^/api/chapters/[^
 
 
 @app.middleware("http")
-async def no_cache_for_dynamic_api(request, call_next):
+async def cache_control_for_api(request, call_next):
     """
     /api/* 응답은 매번 최신 상태를 반영해야 하는 동적 데이터라(읽음 진행률, 안읽음 개수 등),
     브라우저가 임의로 캐싱하면 안 된다. 실제로 브라우저 자체 뒤로가기로 목록 화면에 돌아왔을 때
     fetch 자체는 다시 일어나면서도 브라우저가 이전 응답을 재사용해 안읽음 개수가 갱신 안
     되는 문제가 있었다 - 이 헤더가 없으면 캐시 여부가 브라우저 판단에 맡겨지는 게 원인이었다.
+
+    반대로 커버/페이지 이미지는 내용이 거의 안 바뀌니(바뀌면 서버가 자체적으로
+    source_mtime 기준 캐시를 무효화함) 오히려 적극적으로 캐싱해도 된다는 걸 명시해야
+    한다 - 그냥 "금지 안 함" 정도로는 브라우저가 알아서 캐싱해준다는 보장이 없어서,
+    실제로 리더 갔다가 메인화면에 돌아올 때마다 섬네일을 매번 새로 받아오는 문제가 있었다.
     """
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") and not _CACHEABLE_IMAGE_PATH.match(path):
-        response.headers["Cache-Control"] = "no-store"
+    if path.startswith("/api/"):
+        if _CACHEABLE_IMAGE_PATH.match(path):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        else:
+            response.headers["Cache-Control"] = "no-store"
     return response
 
 

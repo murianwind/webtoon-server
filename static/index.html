@@ -216,6 +216,7 @@ function renderFilterTabs() {
       container.appendChild(btn);
     }
   }
+  updateStickyOffsets(); // 플랫폼 탭 개수가 바뀌면 필터탭 높이도 바뀔 수 있어 매번 재계산
 }
 
 function render() {
@@ -430,11 +431,34 @@ async function load() {
   maybeStartScanPolling();
 }
 
+// topbar/toolbar/filterTabs의 실제 렌더링 높이를 재서, 뒤이은 sticky 요소들이 정확히
+// 그 아래에 이어붙도록 CSS 변수를 채운다. 하드코딩된 픽셀값 대신 실측을 쓰는 이유는,
+// PWA(홈 화면에 추가)처럼 상단 안전영역(노치 등)이 있는 환경에서는 topbar 실제 높이가
+// 브라우저 탭과 달라질 수 있어서, 고정값으로는 환경에 따라 어긋날 수 있기 때문이다.
+function updateStickyOffsets() {
+  const topbar = document.querySelector(".topbar");
+  const toolbar = document.querySelector(".toolbar");
+  const filterTabs = document.getElementById("filterTabs");
+  if (!topbar || !toolbar || !filterTabs) return;
+
+  const topbarHeight = topbar.offsetHeight;
+  const toolbarHeight = toolbar.offsetHeight;
+  const filterTabsHeight = filterTabs.offsetHeight;
+
+  const root = document.documentElement.style;
+  root.setProperty("--toolbar-sticky-top", `${topbarHeight}px`);
+  root.setProperty("--filter-tabs-sticky-top", `${topbarHeight + toolbarHeight}px`);
+  root.setProperty("--read-action-sticky-top", `${topbarHeight + toolbarHeight + filterTabsHeight}px`);
+}
+
+window.addEventListener("resize", updateStickyOffsets);
+
 async function init() {
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
   const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (ok) render();
+  updateStickyOffsets();
   maybeStartScanPolling();
 }
 

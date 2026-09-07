@@ -303,6 +303,7 @@ function stopContinuousScroll() {
 }
 
 function startContinuousScroll(direction) {
+  stopAutoScroll(); // 자동 스크롤과 동시에 돌면 서로 속도가 겹쳐 엉킬 수 있어 우선 멈춤
   if (scrollDirection === direction && scrollAnimationFrame !== null) return;
   scrollDirection = direction;
   let lastTime = performance.now();
@@ -322,6 +323,45 @@ function startContinuousScroll(direction) {
   scrollAnimationFrame = requestAnimationFrame(step);
 }
 
+// 자동 스크롤: 스페이스바로 켜고 끄며, 켜져 있는 동안은 사용자가 손을 안 대도 계속
+// 아래로 내려간다. 속도는 화면 하단의 스크롤 속도(1x/1.5x/2x/3x)를 그대로 따른다.
+// 켜짐 여부는 일부러 저장하지 않는다 - 리더를 새로 열 때마다 항상 꺼진 상태로 시작한다.
+let autoScrollActive = false;
+let autoScrollFrame = null;
+
+function startAutoScroll() {
+  if (autoScrollActive) return;
+  stopContinuousScroll(); // 방향키 연속 스크롤과 동시에 돌면 속도가 겹쳐 엉킬 수 있어 우선 멈춤
+  autoScrollActive = true;
+  let lastTime = performance.now();
+
+  const step = (now) => {
+    if (!autoScrollActive) {
+      autoScrollFrame = null;
+      return;
+    }
+    const elapsed = Math.min(now - lastTime, 50) / 1000;
+    lastTime = now;
+    window.scrollBy(0, SCROLL_PIXELS_PER_SECOND * scrollSpeed * elapsed);
+    autoScrollFrame = requestAnimationFrame(step);
+  };
+
+  autoScrollFrame = requestAnimationFrame(step);
+}
+
+function stopAutoScroll() {
+  autoScrollActive = false;
+  if (autoScrollFrame !== null) {
+    cancelAnimationFrame(autoScrollFrame);
+    autoScrollFrame = null;
+  }
+}
+
+function toggleAutoScroll() {
+  if (autoScrollActive) stopAutoScroll();
+  else startAutoScroll();
+}
+
 // 화면 한 칸(뷰포트 높이의 90%)만큼 이전/다음으로 건너뛴다. 10%를 겹치게 남겨두는 이유는
 // 전자책/PDF 리더에서 흔히 쓰는 관례와 같다 - 겹치는 부분이 없으면 경계에 걸친 말풍선/컷을
 // 놓치기 쉽고, 반대로 너무 많이 겹치면 한 번에 넘어가는 양이 적어 답답해진다. 웹툰도 세로로
@@ -330,6 +370,7 @@ const PAGE_JUMP_OVERLAP_RATIO = 0.1;
 
 function jumpScreen(direction) {
   stopContinuousScroll(); // 혹시 연속 스크롤 중이었다면 멈추고 한 번만 이동
+  stopAutoScroll(); // 자동 스크롤 중이었다면 그것도 멈춤(수동 이동과 동시에 돌면 헷갈림)
   const jumpDistance = window.innerHeight * (1 - PAGE_JUMP_OVERLAP_RATIO);
   window.scrollBy({ top: direction * jumpDistance, left: 0, behavior: "smooth" });
 }
@@ -337,6 +378,15 @@ function jumpScreen(direction) {
 function handleScrollKeyDown(event) {
   const tag = event.target && event.target.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+
+  // 스페이스바: 자동 스크롤 켜기/끄기. 기본 동작(스페이스 = 페이지 다운 스크롤)이
+  // 겹치면 이중으로 움직이니 반드시 막아야 하고, 키를 누르고 있어도(반복 이벤트)
+  // 한 번만 토글되게 event.repeat로 걸러낸다.
+  if (event.key === " " || event.code === "Space") {
+    event.preventDefault();
+    if (!event.repeat) toggleAutoScroll();
     return;
   }
 
