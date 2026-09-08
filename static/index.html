@@ -14,6 +14,9 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<div id="openLoadingOverlay" class="open-loading-overlay" style="display:none">
+  <div class="open-loading-spinner"></div>
+</div>
 <header class="topbar">
   <h1>내 웹툰</h1>
   <span id="scanStatusText" class="scan-status-text"></span>
@@ -273,7 +276,43 @@ function render() {
   }
 }
 
+let openLoadingActive = false;
+let openLoadingHintTimer = null;
+
+function showOpenLoading() {
+  if (openLoadingActive) return; // 이미 다른 클릭으로 로딩 중이면 중복 시작 안 함
+  openLoadingActive = true;
+  const overlay = document.getElementById("openLoadingOverlay");
+  overlay.querySelector(".open-loading-spinner").textContent = "";
+  overlay.style.display = "flex";
+  // 오래 걸리면(네트워크 드라이브 등) 그냥 멈춘 것처럼 보이지 않도록 안내 문구를 띄움
+  openLoadingHintTimer = setTimeout(() => {
+    const spinner = overlay.querySelector(".open-loading-spinner");
+    const hint = document.createElement("div");
+    hint.className = "open-loading-hint";
+    hint.textContent = "불러오는 중...";
+    spinner.after(hint);
+  }, 1500);
+}
+
+function hideOpenLoading() {
+  openLoadingActive = false;
+  if (openLoadingHintTimer) {
+    clearTimeout(openLoadingHintTimer);
+    openLoadingHintTimer = null;
+  }
+  const overlay = document.getElementById("openLoadingOverlay");
+  overlay.style.display = "none";
+  const hint = overlay.querySelector(".open-loading-hint");
+  if (hint) hint.remove();
+}
+
 async function goContinue(seriesId) {
+  if (openLoadingActive) return; // 이미 다른 항목이 로딩 중이면 새 클릭은 무시(중복 이동 방지)
+  // 클릭하자마자 즉시 로딩 표시부터 띄운다 - 이어보기 위치 조회 자체가 네트워크
+  // 드라이브에서는 오래 걸릴 수 있는데, 그동안 화면에 아무 반응이 없으면 클릭이
+  // 안 된 줄 알고 다시 누르게 되는 문제가 있었다.
+  showOpenLoading();
   try {
     const res = await fetch(`/api/series/${encodeURIComponent(seriesId)}/continue`);
     if (!res.ok) throw new Error("continue lookup failed");
@@ -282,6 +321,7 @@ async function goContinue(seriesId) {
   } catch (e) {
     // 이동 실패 시 아무것도 하지 않음 (콘솔에만 남김)
     console.error(e);
+    hideOpenLoading();
   }
 }
 

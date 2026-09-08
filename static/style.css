@@ -985,3 +985,38 @@ a {
   opacity: 1;
   pointer-events: auto;
 }
+
+/* ---------- 웹툰 클릭 -> 리더 진입 로딩 표시 (index.html) ---------- */
+
+.open-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100; /* 다른 오버레이보다 위에서 항상 보여야 함 */
+  background: rgba(20, 22, 26, 0.55);
+  backdrop-filter: blur(2px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.open-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: var(--accent);
+  animation: open-loading-spin 0.7s linear infinite;
+}
+
+@keyframes open-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.open-loading-hint {
+  color: var(--text-dim);
+  font-size: 13px;
+}
