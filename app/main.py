@@ -235,6 +235,7 @@ async def _initial_scan() -> None:
         series_map, chapters_map = await _scan_all_platforms_incrementally()
         _log_scan_result(f"라이브러리 스캔 완료 (경로: {scan.LIBRARY_ROOT})", series_map, chapters_map)
         asyncio.create_task(overlap.precompute_overlaps())
+        asyncio.create_task(precompute_covers())
     except Exception:
         log.exception("초기 스캔 중 오류 발생")
 
@@ -249,6 +250,7 @@ async def _auto_rescan_loop():
             removed = len(old_ids - set(series_map.keys()))
             _log_scan_result("자동 재스캔 완료", series_map, chapters_map, added, removed)
             asyncio.create_task(overlap.precompute_overlaps())
+            asyncio.create_task(precompute_covers())
         except Exception:
             # 한 번 실패해도 다음 주기에 다시 시도 - 서버가 죽으면 안 됨
             log.exception("자동 재스캔 중 오류 발생 - 다음 주기에 재시도")
@@ -262,6 +264,7 @@ async def rescan():
     removed = len(old_ids - set(series_map.keys()))
     _log_scan_result("수동 재스캔 완료", series_map, chapters_map, added, removed)
     asyncio.create_task(overlap.precompute_overlaps())
+    asyncio.create_task(precompute_covers())
     return {"series_count": len(series_map)}
 
 
@@ -324,6 +327,7 @@ async def include_series_folder(body: SeriesFolderRef):
         series_entry, chapters_map = result
         catalog.add_series(series_entry, chapters_map)
         asyncio.create_task(overlap.precompute_overlaps())
+        asyncio.create_task(_ensure_cover_cached(series_entry))  # 이 시리즈 하나만 커버 미리 생성
     log.info(f"시리즈 폴더 다시 포함: {body.platform}/{body.series}")
     return {"ok": True}
 
@@ -611,11 +615,13 @@ def series_info(series_id: str):
     return info
 
 
-@app.get("/api/series/{series_id}/cover")
-async def series_cover(series_id: str):
-    series = catalog.get_series(series_id)
-    if not series:
-        raise HTTPException(404, "no cover")
+async def _ensure_cover_cached(series: dict) -> tuple[bytes, str] | None:
+    """
+    이 시리즈의 커버가 캐시에 없으면 지금 만들어서 캐시해두고, 결과를 반환한다
+    (실패하거나 커버로 쓸 이미지가 아예 없으면 None). 실제 커버 응답 라우트와
+    스캔 후 사전계산 작업이 이 로직을 그대로 공유해서 중복을 없앤다.
+    """
+    series_id = series["id"]
     platform = series["platform"]
 
     cover_path = series.get("cover_path")
@@ -626,21 +632,17 @@ async def series_cover(series_id: str):
             source_mtime = 0
         cached = covers.get_cached_cover(series_id, source_mtime)
         if cached:
-            data, media_type = cached
-        else:
-            # 네트워크 드라이브면 파일을 읽어서 리사이즈하는 데 시간이 걸릴 수 있으니
-            # run_platform_io로 넘겨서, 그 사이 다른(특히 로컬) 요청까지 같이 멈추지 않게 한다.
-            data, media_type = await run_platform_io(
-                platform, covers.generate_and_cache_cover_from_file, series_id, source_mtime, cover_path
-            )
-        return Response(content=data, media_type=media_type)
+            return cached
+        return await run_platform_io(
+            platform, covers.generate_and_cache_cover_from_file, series_id, source_mtime, cover_path
+        )
 
     if not series["chapters"]:
-        raise HTTPException(404, "no cover")
+        return None
     first_chapter = series["chapters"][0]
     names = await run_platform_io(platform, scan.list_zip_image_names, first_chapter["path"])
     if not names:
-        raise HTTPException(404, "no cover image")
+        return None
 
     try:
         source_mtime = await run_platform_io(platform, os.path.getmtime, first_chapter["path"])
@@ -649,15 +651,54 @@ async def series_cover(series_id: str):
 
     cached = covers.get_cached_cover(series_id, source_mtime)
     if cached:
-        data, media_type = cached
-    else:
-        data, media_type = await run_platform_io(
-            platform,
-            covers.generate_and_cache_cover_from_zip,
-            series_id, source_mtime, first_chapter["path"], names[0],
-        )
+        return cached
+    return await run_platform_io(
+        platform,
+        covers.generate_and_cache_cover_from_zip,
+        series_id, source_mtime, first_chapter["path"], names[0],
+    )
 
+
+@app.get("/api/series/{series_id}/cover")
+async def series_cover(series_id: str):
+    series = catalog.get_series(series_id)
+    if not series:
+        raise HTTPException(404, "no cover")
+
+    result = await _ensure_cover_cached(series)
+    if result is None:
+        raise HTTPException(404, "no cover")
+    data, media_type = result
     return Response(content=data, media_type=media_type)
+
+
+_cover_precompute_lock = asyncio.Lock()
+
+
+async def precompute_covers() -> None:
+    """
+    재스캔 직후 호출되는 백그라운드 작업. 모든 시리즈의 커버를 미리 만들어서 캐시해둔다.
+    이렇게 미리 만들어두지 않으면, 첫 방문자가 목록 화면을 열 때(특히 컨테이너를 막
+    띄워서 캐시가 텅 빈 상태일 때) 화면에 보이는 섬네일 수십 개가 한꺼번에
+    "읽기+디코딩+리사이즈+압축" 작업을 동시에 요청하게 되어 첫 로딩이 유난히 느려진다.
+    이미 캐시된 건 곧바로 건너뛰므로(_ensure_cover_cached가 먼저 확인), 스캔마다
+    반복 호출해도 새로 생긴/바뀐 것만 실제로 작업한다.
+    """
+    if _cover_precompute_lock.locked():
+        return
+    async with _cover_precompute_lock:
+        series_list = list(catalog.get_series_map().values())
+        if not series_list:
+            return
+        generated = 0
+        for series in series_list:
+            try:
+                result = await _ensure_cover_cached(series)
+                if result is not None:
+                    generated += 1
+            except Exception:
+                log.exception(f"커버 사전 생성 실패 (건너뛰고 계속): {series['id']}")
+        log.info(f"커버 사전 생성 완료 - {generated}/{len(series_list)}건")
 
 
 # ---------------------------------------------------------------------------
