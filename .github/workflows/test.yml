@@ -9,8 +9,16 @@ on:
 # 같은 브랜치에 연속으로 여러 커밋이 올라오면, 이미 돌고 있던 이전 실행은 취소하고
 # 마지막 것만 끝까지 돌린다 - 어차피 최신 커밋 결과만 의미가 있으므로 중간 것들에
 # CI 자원을 낭비할 필요가 없다.
+#
+# 그룹 이름에 github.workflow를 넣는 이유: 이 워크플로우는 (1) 자체 push 트리거로도
+# 돌고 (2) build.yml이 재사용(workflow_call)해서도 도는데, 둘 다 같은 push 이벤트에
+# 반응해서 거의 동시에 실행된다. github.workflow 없이 그룹 이름을 "test-<브랜치>"로만
+# 두면 이 둘이 "같은 그룹"으로 잡혀서 서로를 취소해버리는 문제가 있었다(빌드는 정상
+# 진행되는데 테스트 쪽이 뜬금없이 취소로 표시됨). github.workflow는 호출된 상황에서는
+# 호출한 쪽(build.yml)의 이름("Build and publish image")으로, 직접 트리거된 상황에서는
+# 이 워크플로우 자신의 이름("Run tests")으로 서로 다르게 잡혀서 그룹이 겹치지 않는다.
 concurrency:
-  group: test-${{ github.ref }}
+  group: test-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
