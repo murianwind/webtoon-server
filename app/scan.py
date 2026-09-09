@@ -215,6 +215,25 @@ def _scan_series_at_path(platform: str, series_ref: str, series_path: str) -> tu
     return series_entry, chapters_map
 
 
+def _resolve_safe_series_path(platform: str, series_ref: str) -> str | None:
+    """
+    platform + series_ref를 실제 폴더 경로로 조합하되, 그 결과가 LIBRARY_ROOT/platform
+    바로 아래(그 하위 어디든)에 있는 게 맞는지 검증한다. series_ref는 API를 통해
+    사용자가 직접 보낼 수 있는 값이라("..") "/api/series-folders/include" 같은
+    엔드포인트에 "../../etc" 같은 값을 넣으면 라이브러리 폴더 밖의 임의 경로를
+    시리즈로 등록해버리는 경로 탐색(path traversal) 문제가 있었다 - 실제로 그
+    경로 밖의 파일이 회차 페이지로 그대로 서빙되는 것까지 확인된 취약점이었다.
+    os.path.realpath로 "../" 등을 전부 해소한 뒤, platform 폴더의 진짜 경로 안에
+    있는지 문자열로 확인해서 벗어난 경우 None을 반환해 걸러낸다.
+    """
+    platform_path = os.path.realpath(os.path.join(LIBRARY_ROOT, platform))
+    series_path = os.path.realpath(os.path.join(platform_path, *series_ref.split("/")))
+    if series_path != platform_path and not series_path.startswith(platform_path + os.sep):
+        log.warning(f"경로 탐색 시도 차단: platform={platform!r}, series={series_ref!r} -> {series_path!r}")
+        return None
+    return series_path
+
+
 def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | None:
     """
     시리즈 폴더 딱 하나만 스캔한다(제외했다가 다시 포함시킬 때, 플랫폼 전체를 다시
@@ -222,9 +241,8 @@ def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | No
     이거나, 폴더가 없거나 zip이 없으면 None. (재포함 액션 전용이라 제외 목록 확인을
     일부러 안 한다 - 호출하는 쪽에서 "방금 제외를 풀었다"는 걸 이미 알고 부르는 것이므로.)
     """
-    platform_path = os.path.join(LIBRARY_ROOT, platform)
-    series_path = os.path.join(platform_path, *series_ref.split("/"))
-    if not os.path.isdir(series_path):
+    series_path = _resolve_safe_series_path(platform, series_ref)
+    if series_path is None or not os.path.isdir(series_path):
         return None
     return _scan_series_at_path(platform, series_ref, series_path)
 

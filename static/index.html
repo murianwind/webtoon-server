@@ -853,7 +853,13 @@ chapterSidebarOverlay.addEventListener("click", closeChapterSidebar);
 // 갱신 안 된 채로 보인다. event.persisted가 true면 정확히 이 경우이므로, 그때만
 // 최신 데이터를 다시 불러온다.
 window.addEventListener("pageshow", (event) => {
-  if (event.persisted) load();
+  if (event.persisted) {
+    hideOpenLoading(); // 리더로 넘어가려고 띄워둔 로딩 오버레이가 bfcache에 그대로
+    // 남아있을 수 있음 - 제스처/백스페이스로 돌아오면 이 페이지를 새로 불러오는 게
+    // 아니라 나가기 직전 상태를 그대로 복원하기 때문에, 그때 떠있던 오버레이도
+    // 그대로 다시 보이는 것 - 데이터 새로고침과 별개로 반드시 같이 닫아줘야 한다.
+    load();
+  }
 });
 
 init();
