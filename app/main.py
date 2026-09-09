@@ -327,7 +327,7 @@ async def include_series_folder(body: SeriesFolderRef):
         series_entry, chapters_map = result
         catalog.add_series(series_entry, chapters_map)
         asyncio.create_task(overlap.precompute_overlaps())
-        asyncio.create_task(_ensure_cover_cached(series_entry))  # 이 시리즈 하나만 커버 미리 생성
+        asyncio.create_task(_precompute_one_cover_with_timeout(series_entry))  # 이 시리즈 하나만 커버 미리 생성
     log.info(f"시리즈 폴더 다시 포함: {body.platform}/{body.series}")
     return {"ok": True}
 
@@ -665,7 +665,12 @@ async def series_cover(series_id: str):
     if not series:
         raise HTTPException(404, "no cover")
 
-    result = await _ensure_cover_cached(series)
+    try:
+        result = await asyncio.wait_for(_ensure_cover_cached(series), timeout=SERIES_SCAN_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        # 네트워크 드라이브가 응답이 없어도 브라우저가 무한정 기다리지 않고 에러로
+        # 끝나게 한다 - 그래야 다음에 다시 시도할 수 있다(무한 스피너 방지).
+        raise HTTPException(504, "cover generation timed out")
     if result is None:
         raise HTTPException(404, "no cover")
     data, media_type = result
@@ -673,6 +678,17 @@ async def series_cover(series_id: str):
 
 
 _cover_precompute_lock = asyncio.Lock()
+
+
+async def _precompute_one_cover_with_timeout(series: dict) -> None:
+    """폴더 재포함 등으로 시리즈 하나만 커버를 미리 만들 때 쓴다. create_task로 띄우는
+    독립 작업이라 타임아웃 없이 멈춰버리면 그 스레드가 계속 남게 되므로 시간 제한을 둔다."""
+    try:
+        await asyncio.wait_for(_ensure_cover_cached(series), timeout=SERIES_SCAN_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        log.warning(f"커버 사전 생성이 {SERIES_SCAN_TIMEOUT_SECONDS}초를 넘겨 건너뜀: {series['id']} ({series['title']})")
+    except Exception:
+        log.exception(f"커버 사전 생성 실패: {series['id']}")
 
 
 async def precompute_covers() -> None:
@@ -693,9 +709,19 @@ async def precompute_covers() -> None:
         generated = 0
         for series in series_list:
             try:
-                result = await _ensure_cover_cached(series)
+                # 응답 없는 네트워크 파일 하나 때문에 이 작업 전체가 멈춰버리면 안 된다 -
+                # 멈추면 이 lock을 영원히 붙잡고 있게 되어, 그 다음부터는 재스캔을 아무리
+                # 해도 사전 생성 자체가 조용히 아무 일도 안 하게 되는 심각한 문제가 있었다.
+                result = await asyncio.wait_for(
+                    _ensure_cover_cached(series), timeout=SERIES_SCAN_TIMEOUT_SECONDS
+                )
                 if result is not None:
                     generated += 1
+            except asyncio.TimeoutError:
+                log.warning(
+                    f"커버 사전 생성이 {SERIES_SCAN_TIMEOUT_SECONDS}초를 넘겨 건너뜀: "
+                    f"{series['id']} ({series['title']}) - 다음 재스캔에서 다시 시도됨"
+                )
             except Exception:
                 log.exception(f"커버 사전 생성 실패 (건너뛰고 계속): {series['id']}")
         log.info(f"커버 사전 생성 완료 - {generated}/{len(series_list)}건")
