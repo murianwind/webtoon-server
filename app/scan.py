@@ -200,7 +200,21 @@ def _scan_series_at_path(platform: str, series_ref: str, series_path: str) -> tu
         chapters_map[chapter_id] = full_path
 
     chapters.sort(key=lambda chapter: (chapter["sort_key"], chapter["filename"]))
-    latest_mtime = max((os.path.getmtime(chapter["path"]) for chapter in chapters), default=0)
+    chapter_mtimes = [os.path.getmtime(chapter["path"]) for chapter in chapters]
+    latest_mtime = max(chapter_mtimes, default=0)
+
+    cover_path = _find_series_cover(series_path)
+    if cover_path:
+        try:
+            cover_mtime = os.path.getmtime(cover_path)
+        except OSError:
+            cover_mtime = 0
+    else:
+        # 별도 표지 파일이 없으면 1화 첫 페이지를 표지로 쓰는데, 그 원본이 바뀌는 시점은
+        # 곧 1화 자체가 바뀌는 시점이므로 1화 파일의 mtime을 그대로 재사용한다. 이렇게
+        # 스캔 시점에 한 번만 계산해서 저장해두면, 표지 요청이 올 때마다(캐시가 이미
+        # 있어도) zip을 다시 열어서 mtime을 확인하는 불필요한 파일 작업을 안 해도 된다.
+        cover_mtime = chapter_mtimes[0] if chapter_mtimes else 0
 
     series_entry = {
         "id": series_id,
@@ -209,7 +223,8 @@ def _scan_series_at_path(platform: str, series_ref: str, series_path: str) -> tu
         "path": series_path,
         "chapters": chapters,
         "latest_mtime": latest_mtime,
-        "cover_path": _find_series_cover(series_path),
+        "cover_path": cover_path,
+        "cover_mtime": cover_mtime,
         "info": _parse_series_info(series_path),
     }
     return series_entry, chapters_map

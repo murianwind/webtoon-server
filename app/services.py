@@ -198,19 +198,24 @@ async def ensure_cover_cached(series: dict) -> tuple[bytes, str] | None:
     이 시리즈의 커버가 캐시에 없으면 지금 만들어서 캐시해두고, 결과를 반환한다
     (실패하거나 커버로 쓸 이미지가 아예 없으면 None). 실제 커버 응답 라우트와
     스캔 후 사전계산 작업이 이 로직을 그대로 공유해서 중복을 없앤다.
+
+    캐시 유효성 판단 기준(source_mtime)은 스캔할 때 이미 계산해서 series["cover_mtime"]에
+    저장해둔 값을 그대로 쓴다 - 예전에는 요청이 올 때마다(캐시가 이미 있어도) 파일
+    존재 확인+mtime 조회를, cover.jpg가 없는 시리즈는 zip을 직접 열어서 목록까지 다시
+    읽어야 했다. 시리즈가 많으면(특히 오랜만에 접속해서 한꺼번에 몰릴 때) 이 불필요한
+    파일 작업들이 쌓여서 캐시가 있어도 몇 초씩 걸리는 원인이었다. 이제 캐시가 있으면
+    파일시스템 접근이 전혀 없이 메모리 조회 한 번으로 끝난다.
     """
     series_id = series["id"]
     platform = series["platform"]
+    source_mtime = series.get("cover_mtime", 0)
+
+    cached = covers.get_cached_cover(series_id, source_mtime)
+    if cached:
+        return cached
 
     cover_path = series.get("cover_path")
-    if cover_path and await run_platform_io(platform, os.path.isfile, cover_path):
-        try:
-            source_mtime = await run_platform_io(platform, os.path.getmtime, cover_path)
-        except OSError:
-            source_mtime = 0
-        cached = covers.get_cached_cover(series_id, source_mtime)
-        if cached:
-            return cached
+    if cover_path:
         return await run_platform_io(
             platform, covers.generate_and_cache_cover_from_file, series_id, source_mtime, cover_path
         )
@@ -222,14 +227,6 @@ async def ensure_cover_cached(series: dict) -> tuple[bytes, str] | None:
     if not names:
         return None
 
-    try:
-        source_mtime = await run_platform_io(platform, os.path.getmtime, first_chapter["path"])
-    except OSError:
-        source_mtime = 0
-
-    cached = covers.get_cached_cover(series_id, source_mtime)
-    if cached:
-        return cached
     return await run_platform_io(
         platform,
         covers.generate_and_cache_cover_from_zip,
