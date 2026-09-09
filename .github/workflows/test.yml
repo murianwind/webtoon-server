@@ -6,6 +6,13 @@ on:
   workflow_dispatch:
   workflow_call: # build.yml에서 이 워크플로우를 재사용(호출)할 수 있게 함
 
+# 같은 브랜치에 연속으로 여러 커밋이 올라오면, 이미 돌고 있던 이전 실행은 취소하고
+# 마지막 것만 끝까지 돌린다 - 어차피 최신 커밋 결과만 의미가 있으므로 중간 것들에
+# CI 자원을 낭비할 필요가 없다.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -9,6 +9,12 @@ permissions:
   contents: read
   packages: write
 
+# main에 연속으로 여러 커밋/파일 변경이 올라오면, 이미 돌고 있던 이전 빌드는 취소하고
+# 마지막 커밋 기준으로만 끝까지 돌린다 - 중간 커밋들의 이미지를 굳이 다 만들 필요는 없다.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     uses: ./.github/workflows/test.yml
