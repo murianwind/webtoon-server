@@ -47,15 +47,19 @@ async def cache_control_for_api(request, call_next):
     되는 문제가 있었다 - 이 헤더가 없으면 캐시 여부가 브라우저 판단에 맡겨지는 게 원인이었다.
 
     반대로 커버/페이지 이미지는 내용이 거의 안 바뀌니(바뀌면 서버가 자체적으로
-    source_mtime 기준 캐시를 무효화함) 오히려 적극적으로 캐싱해도 된다는 걸 명시해야
-    한다 - 그냥 "금지 안 함" 정도로는 브라우저가 알아서 캐싱해준다는 보장이 없어서,
-    실제로 리더 갔다가 메인화면에 돌아올 때마다 섬네일을 매번 새로 받아오는 문제가 있었다.
+    cover_mtime/파일 mtime 기준으로 캐시를 무효화함) 오히려 적극적으로, 오래 캐싱해도
+    된다는 걸 명시해야 한다 - 그냥 "금지 안 함" 정도로는 브라우저가 알아서 캐싱해준다는
+    보장이 없어서, 실제로 리더 갔다가 메인화면에 돌아올 때마다 섬네일을 매번 새로
+    받아오는 문제가 있었다. 원본이 바뀌면 서버가 항상 정확히 무효화하므로(캐시 기간과
+    무관하게 새 이미지로 바뀜), 기간을 넉넉하게(1주일) 둬도 오래된 이미지가 계속
+    보일 위험은 없다 - 오히려 짧으면 "오랜만에 접속" 같은 흔한 상황마다 괜히 다시
+    받아오게 될 뿐이다.
     """
     response = await call_next(request)
     path = request.url.path
     if path.startswith("/api/"):
         if _CACHEABLE_IMAGE_PATH.match(path):
-            response.headers["Cache-Control"] = "public, max-age=3600"
+            response.headers["Cache-Control"] = "public, max-age=604800"
         else:
             response.headers["Cache-Control"] = "no-store"
     return response
