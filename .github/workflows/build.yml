@@ -10,7 +10,11 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   build-and-push:
+    needs: test # 테스트가 통과해야만 이미지를 빌드/푸시함 (실패하면 여기서 멈춤)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
