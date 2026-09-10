@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>로그인 - 내 웹툰</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .login-box { width: 260px; text-align: center; }
+  .login-box h1 { font-size: 18px; margin-bottom: 20px; }
+  .login-box input {
+    width: 100%; box-sizing: border-box; background: var(--bg-elevated); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 10px 12px; font-size: 14px; text-align: center;
+    margin-bottom: 12px;
+  }
+  .login-box button {
+    width: 100%; background: var(--accent); color: #0a2318; border: none; border-radius: 8px;
+    padding: 10px; font-size: 14px; cursor: pointer;
+  }
+  .login-box .error { color: #e07a7a; font-size: 13px; margin-top: 10px; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="login-box">
+  <h1>관리자 비밀번호</h1>
+  <input type="password" id="passwordInput" placeholder="비밀번호" autofocus>
+  <button id="submitBtn">확인</button>
+  <div class="error" id="errorText"></div>
+</div>
+
+<script>
+const input = document.getElementById("passwordInput");
+const btn = document.getElementById("submitBtn");
+const errorText = document.getElementById("errorText");
+
+async function submit() {
+  errorText.textContent = "";
+  const password = input.value;
+  if (!password) return;
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password }),
+    });
+    if (!res.ok) {
+      errorText.textContent = "비밀번호가 올바르지 않습니다.";
+      input.value = "";
+      input.focus();
+      return;
+    }
+    location.href = "/";
+  } catch (e) {
+    errorText.textContent = "연결에 실패했습니다.";
+  }
+}
+
+btn.addEventListener("click", submit);
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submit();
+});
+</script>
+</body>
+</html>

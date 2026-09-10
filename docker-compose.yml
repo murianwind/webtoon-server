@@ -34,6 +34,8 @@ services:
       # - "SLOW_PLATFORMS=gdrive"                        # <-- 클라우드 드라이브 예시(선택): 콤마로 구분한 플랫폼
       #                                                   #     태그명(예: gdrive,onedrive). 이 목록에 있는 플랫폼은
       #                                                   #     항상 로컬보다 나중에 스캔됩니다.
+      # - "PROFILES_ENABLED=true"                        # <-- 공유 프로필 기능(선택): 관리자 비밀번호 + 개인별 링크
+      # - "DISCORD_WEBHOOK_URL="                          # <-- 공유 프로필 켰을 때만(선택): 관리자 비밀번호 최초 생성 시 알림
     volumes:
       - "/path/to/your/naver-webtoons:/library/naver"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그
       - "/path/to/your/kakao-webtoons:/library/kakao"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그

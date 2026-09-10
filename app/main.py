@@ -10,12 +10,21 @@ app/services.py에 있다:
   - routers/chapters.py  회차 페이지 서빙, 화 전환 겹침 감지
   - routers/settings.py  앱 설정 저장/조회
   - routers/backup.py    백업/복원
+  - routers/auth.py      (PROFILES_ENABLED일 때만) 관리자 로그인 + 기억된 기기 관리
+  - routers/profiles.py  (PROFILES_ENABLED일 때만) 프로필 관리(관리자 전용)
   - services.py          위 라우터들이 공유하는 백그라운드 스캔/커버 사전생성 등
-  - db.py       읽음 진행률 / 설정 / 제외목록 / 겹침캐시 / 백업·복원 (SQLite)
+  - db.py       읽음 진행률 / 설정 / 제외목록 / 겹침캐시 / 백업·복원 (SQLite) - 관리자 전용
+  - auth.py, profiles.py, access_requests.py, profile_progress.py, discord_notify.py
+                (PROFILES_ENABLED일 때만 실질적으로 쓰이는 공유 프로필 기능)
   - catalog.py  스캔 결과를 담아두는 메모리 상태
   - scan.py     파일시스템 스캔 + 회차 라벨 파싱
   - overlap.py  화 전환 겹침(리캡) 감지 알고리즘 + 백그라운드 사전계산
   - covers.py   시리즈 커버 썸네일 생성/캐싱
+
+PROFILES_ENABLED(공유 프로필) 기능: 환경변수가 없거나 "true"가 아니면 완전히 비활성화되고,
+그 상태에서는 이 파일의 나머지 로직이 기존과 100% 동일하게 동작한다(관련 라우터도
+등록되지 않고, 관련 스키마도 만들어지지 않음) - 이 기능을 켜지 않은 사용자에게는
+아무 영향이 없다.
 """
 
 import asyncio
@@ -24,6 +33,7 @@ import os
 import re
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, services
@@ -31,6 +41,8 @@ from .routers import backup, chapters, library, series, settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("webtoon-server")
+
+PROFILES_ENABLED = os.environ.get("PROFILES_ENABLED", "").lower() == "true"
 
 app = FastAPI(title="webtoon-server")
 
@@ -66,7 +78,64 @@ async def cache_control_for_api(request, call_next):
 
 
 # ---------------------------------------------------------------------------
-# 앱 생명주기: 시작 시 스캔, 자동 재스캔 예약
+# 공유 프로필 인증 게이트 (PROFILES_ENABLED일 때만 동작)
+# ---------------------------------------------------------------------------
+
+DEVICE_COOKIE_NAME = "webtoon_device"
+
+# 비밀번호 없이 항상 통과시켜야 하는 경로 - 로그인 화면 자체와 로그인 API, 그리고 로그인
+# 화면이 그리는 데 필요한 최소한의 정적 자원.
+_ADMIN_GATE_ALLOWLIST = ("/login.html", "/api/auth/login", "/favicon.ico", "/manifest.json", "/icons/", "/style.css")
+
+
+@app.middleware("http")
+async def profile_and_admin_gate(request, call_next):
+    """
+    PROFILES_ENABLED가 꺼져있으면 아무것도 안 하고 그대로 통과시킨다(request.state.profile만
+    None으로 채워둠) - 이 기능을 안 쓰는 사람에게는 기존과 동일하게 동작한다.
+
+    켜져있으면:
+    - "/p/<토큰>/..." 경로는 그 토큰이 유효한 프로필인지 확인하고, request.state.profile에
+      그 프로필을 담아둔 뒤, 경로에서 "/p/<토큰>" 부분을 떼어내고 나머지 요청을 그대로
+      진행시킨다 - 그러면 "/p/xyz/api/series"가 실제로는 "/api/series"와 똑같이
+      라우팅되어, 기존 라우트 코드를 하나도 복제/중복 등록할 필요가 없다.
+    - 그 외 경로(관리자용 루트)는 "기억된 기기" 쿠키가 있어야 통과한다. 없으면 API
+      요청은 401, 화면 요청은 로그인 화면으로 리다이렉트한다.
+    """
+    if not PROFILES_ENABLED:
+        request.state.profile = None
+        return await call_next(request)
+
+    from . import auth, profiles  # 지연 import: 기능이 꺼져있을 때 불필요한 로드를 피함
+
+    path = request.scope["path"]
+
+    if path.startswith("/p/"):
+        parts = path.split("/", 3)  # ["", "p", "<토큰>", "나머지..."]
+        token = parts[2] if len(parts) > 2 else ""
+        profile = profiles.get_profile_by_token(token)
+        if profile is None:
+            return JSONResponse({"detail": "profile link not found"}, status_code=404)
+        request.state.profile = profile
+        request.scope["path"] = "/" + parts[3] if len(parts) > 3 else "/"
+        return await call_next(request)
+
+    request.state.profile = None
+    device_id = request.cookies.get(DEVICE_COOKIE_NAME)
+    if auth.is_device_remembered(device_id):
+        auth.touch_device(device_id)
+        return await call_next(request)
+
+    if any(path == allowed or path.startswith(allowed) for allowed in _ADMIN_GATE_ALLOWLIST):
+        return await call_next(request)
+
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "unauthorized"}, status_code=401)
+    return RedirectResponse("/login.html")
+
+
+# ---------------------------------------------------------------------------
+# 앱 생명주기: 시작 시 스캔, 자동 재스캔 예약, (켜져있으면) 프로필 기능 초기화
 # ---------------------------------------------------------------------------
 
 
@@ -85,6 +154,24 @@ async def startup_scan():
     else:
         log.info("자동 재스캔 비활성화됨 (RESCAN_INTERVAL_SECONDS <= 0)")
 
+    if PROFILES_ENABLED:
+        from . import access_requests, auth, discord_notify, profile_progress, profiles
+
+        auth.init_schema()
+        profiles.init_schema()
+        access_requests.init_schema()
+        profile_progress.init_schema()
+
+        # 저장된 비밀번호가 없을 때만(최초 실행) 새로 만든다 - 매번 만들면 이미 등록된
+        # 기기들이 전부 다시 로그인하게 되므로 반드시 "없을 때만"이어야 한다.
+        generated_password = auth.ensure_admin_password_exists()
+        if generated_password:
+            log.warning(f"[최초 실행] 관리자 비밀번호가 생성되었습니다: {generated_password}")
+            log.warning("이 비밀번호는 다시 보여주지 않으니 지금 저장해두세요. (재설정: README 참고)")
+            asyncio.create_task(
+                discord_notify.send(f"🔑 webtoon-server 관리자 비밀번호가 생성되었습니다: `{generated_password}`")
+            )
+
 
 # ---------------------------------------------------------------------------
 # 라우터 등록
@@ -95,6 +182,13 @@ app.include_router(series.router)
 app.include_router(chapters.router)
 app.include_router(settings.router)
 app.include_router(backup.router)
+
+if PROFILES_ENABLED:
+    from .routers import auth as auth_router
+    from .routers import profiles as profiles_router
+
+    app.include_router(auth_router.router)
+    app.include_router(profiles_router.router)
 
 
 # ---------------------------------------------------------------------------

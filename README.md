@@ -155,6 +155,27 @@ volumes:
 | `SLOW_PLATFORMS` | (없음) | 콤마로 구분한 플랫폼 태그명. 네트워크 드라이브(원드라이브 등)로 마운트한 태그를 적어두면, 로컬 플랫폼을 전부 먼저 스캔한 뒤 이 목록을 나중에 스캔하고, 파일 읽기도 로컬과 분리된 전용 스레드풀에서 처리해 로컬 열람에 영향을 안 주게 됨 |
 | `SERIES_SCAN_TIMEOUT_SECONDS` | `30` | 시리즈 하나를 스캔하는 데 이 시간을 넘기면 포기하고 다음으로 넘어감(네트워크 드라이브가 응답 없을 때 전체 스캔이 멈춰버리는 걸 방지). 필요하면 늘릴 수 있음 |
 | `NETWORK_IO_WORKERS` | `4` | `SLOW_PLATFORMS`에 지정된 플랫폼의 파일 읽기를 처리하는 전용 스레드 개수 |
+| `PROFILES_ENABLED` | `false` | `true`로 설정하면 공유 프로필 기능이 켜짐(관리자 비밀번호 + 개인별 공유 링크). 자세한 내용은 아래 "공유 프로필" 섹션 참고 |
+| `DISCORD_WEBHOOK_URL` | (없음) | 설정하면 관리자 비밀번호 최초 생성 시 이 웹훅으로 알려줌(선택 사항 - 없어도 서버 로그에는 항상 찍힘) |
+
+### 공유 프로필 (선택 기능)
+
+`PROFILES_ENABLED=true`로 켜면, 본인 계정(관리자)과 별개로 **특정 사람에게 특정 웹툰만 공개하는 개인별 링크**를 만들 수 있습니다. 안 켜면 기존과 완전히 동일하게 동작합니다.
+
+- **관리자 비밀번호**: 최초 실행 시 무작위로 하나 생성되어 **컨테이너 로그에 딱 한 번 출력**됩니다(`docker logs webtoon-server`에서 확인). `DISCORD_WEBHOOK_URL`을 설정해두면 디스코드로도 같이 전달됩니다. 이후 비밀번호를 한 번 맞춘 기기는 계속 기억되어, 다시 물어보지 않습니다.
+- **공유 프로필 링크**(`/p/<토큰>/...`)는 관리자 비밀번호와 무관하게, 그 링크 자체가 접근 권한입니다. 프로필마다 이름/허용된 시리즈/둘러보기 연령 필터를 관리자 화면에서 설정할 수 있습니다.
+- **비밀번호를 잊었거나 초기화하고 싶으면**: 컨테이너 안에서 아래 명령으로 저장된 비밀번호를 지우고 재시작하면, 다음 시작 시 "최초 실행"으로 인식되어 새 비밀번호가 다시 생성되어 로그에 출력됩니다(이미 등록된 기기들은 그대로 유지됨 - 다시 로그인할 필요 없음).
+
+```
+docker exec webtoon-server python -c "
+import sqlite3, os
+conn = sqlite3.connect(os.environ.get('DB_PATH', '/data/progress.db'))
+conn.execute(\"DELETE FROM admin_auth WHERE key = 'admin_password_hash'\")
+conn.commit()
+"
+docker restart webtoon-server
+docker logs webtoon-server | grep 관리자
+```
 
 ### 자동 업데이트
 
