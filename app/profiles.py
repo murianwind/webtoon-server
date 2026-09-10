@@ -162,3 +162,12 @@ def get_allowed_series_ids(profile_id: str) -> set[str]:
             "SELECT series_id FROM profile_allowed_series WHERE profile_id = ?", (profile_id,)
         ).fetchall()
     return {r[0] for r in rows}
+
+
+def series_matches_browse_filters(series: dict, profile_id: str) -> bool:
+    """이 시리즈가 그 프로필의 "둘러보기" 연령 필터(플랫폼별)에 걸리는지 확인한다.
+    커버/정보 미리보기처럼, 완전히 허용되지는 않았지만 미리 볼 수는 있어야 하는
+    엔드포인트에서 access_control.ensure_series_previewable이 이 함수를 통해 쓴다."""
+    info = series.get("info") or {}
+    age_rating = info.get("age_rating") or NO_AGE_RATING
+    return (series["platform"], age_rating) in get_browse_filters(profile_id)

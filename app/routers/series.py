@@ -329,13 +329,16 @@ def series_info(series_id: str, request: Request):
     """
     info.xml(카카오 등 일부 플랫폼에만 있음)에서 뽑아둔 작가/장르/줄거리/연재상태/연령등급/
     원작 링크를 반환. info.xml이 없는 시리즈(네이버 등)는 404.
+
+    표지와 마찬가지로 완화된 접근 검사를 쓴다 - 둘러보기(아직 허용 전) 항목도
+    정보를 미리 볼 수 있어야 하기 때문이다.
     """
     profile = access_control.get_profile(request)
-    access_control.ensure_series_accessible(profile, series_id)
-
     series = catalog.get_series(series_id)
     if not series:
         raise HTTPException(404, "series not found")
+    access_control.ensure_series_previewable(profile, series)
+
     info = series.get("info")
     if not info:
         raise HTTPException(404, "no info available for this series")
@@ -345,11 +348,13 @@ def series_info(series_id: str, request: Request):
 @router.get("/api/series/{series_id}/cover")
 async def series_cover(series_id: str, request: Request):
     profile = access_control.get_profile(request)
-    access_control.ensure_series_accessible(profile, series_id)
-
     series = catalog.get_series(series_id)
     if not series:
         raise HTTPException(404, "no cover")
+    # 회차 목록/페이지 등과 달리, 표지는 둘러보기(아직 완전히 허용되지 않은 시리즈)
+    # 화면에서도 미리 보여줘야 하므로 완화된 검사를 쓴다 - 실제 콘텐츠(회차)는
+    # 여전히 엄격한 ensure_series_accessible로 막혀있으니 안전하다.
+    access_control.ensure_series_previewable(profile, series)
 
     try:
         result = await asyncio.wait_for(

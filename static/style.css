@@ -571,6 +571,8 @@ a {
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  height: 34px; /* 1줄/2줄 제목이 섞여도 항상 2줄 높이를 차지해서, 그 아래(버튼 등)의
+  위치가 카드마다 들쭉날쭉해지지 않게 고정한다. */
 }
 
 .card .chapter-count {
@@ -1039,6 +1041,32 @@ a {
   border-color: var(--border);
   color: var(--text-dim);
   cursor: default;
+}
+
+.browse-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.browse-info-btn {
+  flex-shrink: 0;
+  width: 28px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.browse-card-actions .browse-request-btn {
+  margin-top: 0;
+  flex: 1;
+}
+
+.browse-info-panel {
+  margin-top: 8px;
 }
 
 /* ---------- 공유 프로필 관리 화면 (관리자 전용, index.html) ---------- */

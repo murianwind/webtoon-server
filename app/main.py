@@ -155,12 +155,13 @@ async def startup_scan():
         log.info("자동 재스캔 비활성화됨 (RESCAN_INTERVAL_SECONDS <= 0)")
 
     if PROFILES_ENABLED:
-        from . import access_requests, auth, discord_notify, profile_progress, profiles
+        from . import access_requests, auth, discord_notify, profile_progress, profile_settings, profiles
 
         auth.init_schema()
         profiles.init_schema()
         access_requests.init_schema()
         profile_progress.init_schema()
+        profile_settings.init_schema()
 
         # 저장된 비밀번호가 없을 때만(최초 실행) 새로 만든다 - 매번 만들면 이미 등록된
         # 기기들이 전부 다시 로그인하게 되므로 반드시 "없을 때만"이어야 한다.

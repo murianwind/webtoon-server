@@ -78,6 +78,12 @@
       <div id="profilesList" class="lib-list"></div>
       <button id="addProfileBtn" class="mark-all-btn ghost">+ 프로필 추가</button>
     </div>
+    <div class="settings-section" id="devicesSection" style="display:none">
+      <div class="settings-section-title">등록된 기기</div>
+      <div class="settings-hint">관리자 비밀번호를 한 번 통과해서 계속 기억되고 있는 기기 목록입니다. 삭제하면
+      그 기기는 다음 접속 때 비밀번호를 다시 물어봅니다.</div>
+      <div id="devicesList" class="lib-list"></div>
+    </div>
   </div>
 </aside>
 <div id="settingsOverlay" class="sidebar-overlay"></div>
@@ -636,8 +642,24 @@ function renderBrowseGrid(items) {
         <img src="${item.cover_url}" alt="${item.title}" loading="lazy">
       </div>
       <div class="title">${item.title}</div>
-      <button class="browse-request-btn" ${buttonDisabled ? "disabled" : ""}>${buttonLabel}</button>
+      <div class="browse-card-actions">
+        <button class="browse-info-btn" title="정보 보기">ℹ</button>
+        <button class="browse-request-btn" ${buttonDisabled ? "disabled" : ""}>${buttonLabel}</button>
+      </div>
+      <div class="browse-info-panel series-info-panel" style="display:none"></div>
     `;
+    card.querySelector(".browse-info-btn").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const panel = card.querySelector(".browse-info-panel");
+      if (panel.style.display !== "none") {
+        panel.style.display = "none";
+        return;
+      }
+      if (!panel.dataset.loaded) {
+        await loadBrowseCardInfo(item.id, panel);
+      }
+      panel.style.display = "block";
+    });
     card.querySelector(".browse-request-btn").addEventListener("click", async (e) => {
       e.stopPropagation();
       const btn = e.target;
@@ -1028,6 +1050,49 @@ let profileAgeRatingsCache = null;
 let profileSeriesCatalogCache = null;
 let editingProfileId = null;
 
+async function loadBrowseCardInfo(seriesId, panel) {
+  panel.dataset.loaded = "1";
+  try {
+    const res = await fetch(`/api/series/${encodeURIComponent(seriesId)}/info`);
+    if (!res.ok) {
+      panel.innerHTML = `<div class="series-info-row">상세 정보가 없습니다.</div>`;
+      return;
+    }
+    const info = await res.json();
+    const rows = [];
+    if (info.writer) rows.push(`<div class="series-info-row"><b>작가</b> ${info.writer}</div>`);
+    if (info.cover_artist) rows.push(`<div class="series-info-row"><b>그림</b> ${info.cover_artist}</div>`);
+    if (info.notes) rows.push(formatNotesRow(info.notes));
+    if (info.genre) rows.push(`<div class="series-info-row"><b>장르</b> ${info.genre}</div>`);
+    if (info.age_rating) rows.push(`<div class="series-info-row"><b>연령등급</b> ${info.age_rating}</div>`);
+    if (info.summary) rows.push(`<div class="series-info-summary">${info.summary.replace(/\s*\n\s*/g, " ").trim()}</div>`);
+    panel.innerHTML = rows.length ? rows.join("") : `<div class="series-info-row">상세 정보가 없습니다.</div>`;
+  } catch (e) {
+    panel.innerHTML = `<div class="series-info-row">불러오지 못했습니다.</div>`;
+  }
+}
+
+function simplifyDeviceLabel(userAgent) {
+  // User-Agent 원문은 길고 안 읽히므로, 흔한 브라우저/OS 이름만 뽑아서 "브라우저 · OS"
+  // 형태로 보여준다. 못 알아보는 값이면 원문을 그대로 보여준다(잘라내서 정보를 숨기지 않음).
+  const browser =
+    /Edg\//.test(userAgent) ? "Edge" :
+    /Chrome\//.test(userAgent) ? "Chrome" :
+    /Firefox\//.test(userAgent) ? "Firefox" :
+    /Safari\//.test(userAgent) && !/Chrome/.test(userAgent) ? "Safari" :
+    null;
+  const os =
+    /Windows/.test(userAgent) ? "Windows" :
+    /Android/.test(userAgent) ? "Android" :
+    /iPhone|iPad/.test(userAgent) ? "iOS" :
+    /Mac OS X/.test(userAgent) ? "macOS" :
+    /Linux/.test(userAgent) ? "Linux" :
+    null;
+  if (browser && os) return `${browser} · ${os}`;
+  if (browser) return browser;
+  return userAgent.slice(0, 40);
+}
+
 async function initProfilesAdminUI() {
   try {
     const res = await fetch("/api/admin/profiles");
@@ -1045,7 +1110,35 @@ async function initProfilesAdminUI() {
   document.getElementById("profileDeleteBtn").addEventListener("click", deleteCurrentProfile);
   document.getElementById("profileSeriesPlatformFilter").addEventListener("change", () => renderProfileSeriesChecklist());
   document.getElementById("profileSeriesAgeFilter").addEventListener("change", () => renderProfileSeriesChecklist());
-  await refreshProfilesList();
+  document.getElementById("devicesSection").style.display = "";
+  await Promise.all([refreshProfilesList(), refreshDevicesList()]);
+}
+
+async function refreshDevicesList() {
+  const res = await fetch("/api/auth/devices");
+  if (!res.ok) return;
+  const devices = await res.json();
+  const container = document.getElementById("devicesList");
+  container.innerHTML = "";
+  if (!devices.length) {
+    container.innerHTML = `<div class="settings-hint">등록된 기기가 없습니다.</div>`;
+    return;
+  }
+  for (const device of devices) {
+    const row = document.createElement("div");
+    row.className = "lib-row";
+    const lastSeen = new Date(device.last_seen_at).toLocaleString("ko-KR");
+    row.innerHTML = `
+      <span class="lib-name">${simplifyDeviceLabel(device.label)} <span class="profile-allowed-count">마지막 접속: ${lastSeen}</span></span>
+      <button class="lib-action-btn">삭제</button>
+    `;
+    row.querySelector(".lib-action-btn").addEventListener("click", async () => {
+      if (!confirm("이 기기를 삭제하시겠습니까? 다음 접속 때 비밀번호를 다시 물어봅니다.")) return;
+      await fetch(`/api/auth/devices/${device.device_id}`, { method: "DELETE" });
+      refreshDevicesList();
+    });
+    container.appendChild(row);
+  }
 }
 
 async function refreshProfilesList() {

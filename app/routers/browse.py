@@ -30,15 +30,12 @@ def browse(request: Request):
     """
     profile = _require_profile(request)
     allowed_ids = profiles.get_allowed_series_ids(profile["id"])
-    browse_filters = profiles.get_browse_filters(profile["id"])
 
     result = []
     for series in catalog.get_series_map().values():
         if series["id"] in allowed_ids:
             continue
-        info = series.get("info") or {}
-        age_rating = info.get("age_rating") or profiles.NO_AGE_RATING
-        if (series["platform"], age_rating) not in browse_filters:
+        if not profiles.series_matches_browse_filters(series, profile["id"]):
             continue
 
         status = access_requests.get_request_status(profile["id"], series["id"])

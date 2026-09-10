@@ -19,11 +19,29 @@ def get_profile(request: Request) -> dict | None:
 
 def ensure_series_accessible(profile: dict | None, series_id: str) -> None:
     """profile이 있는데(공유 링크) 그 시리즈가 허용 목록에 없으면 403.
-    profile이 None(관리자)이면 항상 통과 - 기존 동작 그대로."""
+    profile이 None(관리자)이면 항상 통과 - 기존 동작 그대로.
+
+    회차 목록/페이지/진행률처럼 실제 콘텐츠에 접근하는 라우트에서만 쓴다 - 완전히
+    허용된 시리즈만 통과시키는 엄격한 검사다."""
     if profile is None:
         return
     if series_id not in profiles.get_allowed_series_ids(profile["id"]):
         raise HTTPException(403, "not allowed for this profile")
+
+
+def ensure_series_previewable(profile: dict | None, series: dict) -> None:
+    """표지/info.xml 미리보기처럼, "완전히 허용되지는 않았지만 미리 볼 수는 있어야
+    하는" 라우트에서 쓰는 완화된 검사. 완전히 허용된 시리즈 OR 그 프로필의 둘러보기
+    연령 필터에 걸리는 시리즈면 통과한다 - 둘러보기 화면에서 아직 요청 전인 시리즈의
+    표지/정보를 보여주려면 이 완화된 검사가 필요하다(엄격한 검사를 쓰면 둘러보기
+    항목 자체가 다 막혀버림)."""
+    if profile is None:
+        return
+    if series["id"] in profiles.get_allowed_series_ids(profile["id"]):
+        return
+    if profiles.series_matches_browse_filters(series, profile["id"]):
+        return
+    raise HTTPException(403, "not allowed for this profile")
 
 
 def get_progress(profile: dict | None, series_id: str) -> dict | None:
