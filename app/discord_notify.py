@@ -21,7 +21,15 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
 def _post(message: str) -> None:
     data = json.dumps({"content": message}).encode("utf-8")
     req = urllib.request.Request(
-        DISCORD_WEBHOOK_URL, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        DISCORD_WEBHOOK_URL,
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            # 기본 User-Agent(Python-urllib/...)는 디스코드(Cloudflare)가 봇으로 의심해서
+            # 403으로 막는 경우가 있다 - 일반 브라우저처럼 보이는 값으로 바꿔서 우회한다.
+            "User-Agent": "Mozilla/5.0 (compatible; webtoon-server/1.0)",
+        },
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=10.0):
         pass
