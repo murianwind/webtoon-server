@@ -245,10 +245,16 @@ def list_chapters(series_id: str, request: Request):
         services.migrate_legacy_progress_if_needed(series_id, chapters, prog)
     read_ids = access_control.get_read_chapter_ids(profile, series_id)
     current_chapter_id = prog["chapter_id"] if prog else None
+    # 완독 처리(마지막 화를 끝까지 읽었을 때)는 이어보기 포인터에 PAGE_FINISHED_SENTINEL을
+    # 저장해서 "이 회차는 끝까지 다 봤다"를 표시한다. 이 값이면 포인터가 그 회차를
+    # 가리키고 있어도 "지금 읽는 중"이 아니라 "다 읽었다"는 뜻이므로, 아래에서 "읽는 중"
+    # 판단에 포함시키지 않는다 - 안 그러면 마지막 화를 완독한 뒤 새 화가 추가돼도(포인터가
+    # 아직 그 회차를 가리키고 있으니) 완독된 회차가 계속 "읽는 중"으로 잘못 보이게 된다.
+    current_is_finished_sentinel = bool(prog) and prog["page_index"] == db.PAGE_FINISHED_SENTINEL
 
     chapters_out = []
     for chapter in chapters:
-        is_reading = chapter["id"] == current_chapter_id
+        is_reading = chapter["id"] == current_chapter_id and not current_is_finished_sentinel
         # "지금 보고 있는 회차"라는 정보가 "예전에 읽었는지"보다 더 구체적이고 우선한다 -
         # 사이드바에서 이미 읽었던 회차로 다시 돌아가서 보면(예: 10화까지 읽다가 2화를
         # 다시 열어봄), 그 회차는 "읽음" 기록이 있어도 지금 보는 중이라는 게 더 중요한
