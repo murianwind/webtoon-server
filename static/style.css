@@ -90,11 +90,19 @@ a {
   to { transform: rotate(360deg); }
 }
 
+/* ---------- 프로필 화면: 내 웹툰/둘러보기 탭 (index.html) ---------- */
+
+#profileViewTabs {
+  position: sticky;
+  top: var(--profile-tabs-sticky-top, 61px); /* JS가 topbar 실측 높이로 채움 */
+  z-index: 9;
+}
+
 /* ---------- 검색/정렬 툴바 (index.html) ---------- */
 
 .toolbar {
   position: sticky;
-  top: var(--toolbar-sticky-top, 61px); /* JS가 topbar 실측 높이로 채움 - PWA 등 환경별 안전영역 차이 대응 */
+  top: var(--toolbar-sticky-top, 61px); /* JS가 topbar(+프로필 탭) 실측 높이로 채움 */
   z-index: 9;
   display: flex;
   gap: 8px;

@@ -23,6 +23,10 @@
   <button id="settingsBtn" class="rescan-btn" title="라이브러리/백업 설정" aria-label="설정">⚙</button>
   <button id="rescanBtn" class="rescan-btn" title="새로고침(재스캔)" aria-label="재스캔">⟳</button>
 </header>
+<div id="profileViewTabs" class="filter-tabs" style="display:none">
+  <button class="filter-tab active" id="profileTabMine">내 웹툰</button>
+  <button class="filter-tab" id="profileTabBrowse">둘러보기</button>
+</div>
 <div class="toolbar">
   <input id="searchInput" class="search-input" type="text" placeholder="제목 검색">
   <select id="sortSelect" class="sort-select">
@@ -32,11 +36,6 @@
   </select>
 </div>
 <div id="filterTabs" class="filter-tabs"></div>
-
-<div id="profileViewTabs" class="filter-tabs" style="display:none">
-  <button class="filter-tab active" id="profileTabMine">내 웹툰</button>
-  <button class="filter-tab" id="profileTabBrowse">둘러보기</button>
-</div>
 
 <aside id="settingsPanel" class="sidebar">
   <div class="sidebar-header">
@@ -181,9 +180,9 @@ function withProfilePrefix(path) {
 }
 
 const LS_QUERY = "webtoon:index:query";
-const LS_SORT = "webtoon:index:sort";
 const FILTER_KEY = "status_filter"; // 서버(app_settings)에 저장 -> 모든 기기에서 동일하게 적용
 const PLATFORM_FILTER_KEY = "platform_filter"; // 위와 같은 이유로 서버에 저장
+const SORT_KEY = "sort_mode"; // 위와 같은 이유로 서버에 저장(검색어는 입력마다 바뀌어서 과하니 localStorage 유지)
 const STATUS_OPTIONS = [
   { value: "unread", label: "읽지 않음" },
   { value: "reading", label: "읽는 중" },
@@ -193,7 +192,7 @@ const STATUS_VALUES = STATUS_OPTIONS.map((o) => o.value);
 
 let allSeries = [];
 let query = localStorage.getItem(LS_QUERY) || "";
-let sortMode = localStorage.getItem(LS_SORT) || "latest";
+let sortMode = "latest"; // 서버(loadSortSetting)에서 로드됨 - localStorage 대신 프로필별로 분리 저장
 let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로드되기 전까지의 기본값)
 let selectedPlatforms = new Set(); // 비어있으면 "전체 플랫폼", 여러 개 동시 선택 가능
 let knownPlatforms = []; // /library 바로 아래 폴더 이름 전체 (아직 스캔 안 끝난 것도 포함)
@@ -486,6 +485,19 @@ async function loadFilterSetting() {
   }
 }
 
+async function loadSortSetting() {
+  try {
+    const res = await fetch(`/api/settings/${SORT_KEY}`);
+    const data = await res.json();
+    if (data.value && ["latest", "unread", "title"].includes(data.value)) {
+      sortMode = data.value;
+      sortSelect.value = sortMode;
+    }
+  } catch (e) {
+    // 실패 시 기본값("latest") 유지
+  }
+}
+
 async function fetchSeries() {
   const grid = document.getElementById("grid");
   try {
@@ -565,18 +577,23 @@ async function load() {
 // 브라우저 탭과 달라질 수 있어서, 고정값으로는 환경에 따라 어긋날 수 있기 때문이다.
 function updateStickyOffsets() {
   const topbar = document.querySelector(".topbar");
+  const profileViewTabs = document.getElementById("profileViewTabs");
   const toolbar = document.querySelector(".toolbar");
   const filterTabs = document.getElementById("filterTabs");
   if (!topbar || !toolbar || !filterTabs) return;
 
   const topbarHeight = topbar.offsetHeight;
+  // 프로필 화면(내 웹툰/둘러보기 탭)이 안 보이면 높이가 0이라, 관리자 화면에서는
+  // 이 값이 그냥 0으로 계산되어 예전과 동일한 결과가 나온다.
+  const profileTabsHeight = profileViewTabs ? profileViewTabs.offsetHeight : 0;
   const toolbarHeight = toolbar.offsetHeight;
   const filterTabsHeight = filterTabs.offsetHeight;
 
   const root = document.documentElement.style;
-  root.setProperty("--toolbar-sticky-top", `${topbarHeight}px`);
-  root.setProperty("--filter-tabs-sticky-top", `${topbarHeight + toolbarHeight}px`);
-  root.setProperty("--read-action-sticky-top", `${topbarHeight + toolbarHeight + filterTabsHeight}px`);
+  root.setProperty("--profile-tabs-sticky-top", `${topbarHeight}px`);
+  root.setProperty("--toolbar-sticky-top", `${topbarHeight + profileTabsHeight}px`);
+  root.setProperty("--filter-tabs-sticky-top", `${topbarHeight + profileTabsHeight + toolbarHeight}px`);
+  root.setProperty("--read-action-sticky-top", `${topbarHeight + profileTabsHeight + toolbarHeight + filterTabsHeight}px`);
 }
 
 window.addEventListener("resize", updateStickyOffsets);
@@ -591,7 +608,7 @@ async function init() {
     initProfilesAdminUI(); // 관리자 화면에서만 - PROFILES_ENABLED 켜져 있으면 섹션을 보여줌
   }
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
-  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), fetchScanStatus()]);
+  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), loadSortSetting(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (ok) render();
   updateStickyOffsets();
@@ -689,7 +706,11 @@ searchInput.addEventListener("input", (e) => {
 });
 sortSelect.addEventListener("change", (e) => {
   sortMode = e.target.value;
-  localStorage.setItem(LS_SORT, sortMode);
+  fetch(`/api/settings/${SORT_KEY}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ value: sortMode }),
+  });
   render();
 });
 
