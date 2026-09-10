@@ -1209,12 +1209,11 @@ async function openProfileEditor(profileId) {
   const allowedIds = new Set(await allowedRes.json());
   const requests = await requestsRes.json();
 
-  if (!profileAgeRatingsCache) {
-    profileAgeRatingsCache = await (await fetch("/api/admin/age-ratings")).json();
-  }
-  if (!profileSeriesCatalogCache) {
-    profileSeriesCatalogCache = await (await fetch("/api/admin/series-catalog")).json();
-  }
+  // 매번 새로 불러온다(캐시 안 함) - 원드라이브처럼 느린 플랫폼은 스캔이 늦게 끝나니,
+  // 관리자가 이 화면을 스캔 완료 전에 한 번이라도 열면 그 시점의 불완전한 목록이
+  // 캐시되어 새로고침 전까지 계속 남아있는 문제가 있었다.
+  profileAgeRatingsCache = await (await fetch("/api/admin/age-ratings")).json();
+  profileSeriesCatalogCache = await (await fetch("/api/admin/series-catalog")).json();
 
   document.getElementById("profileEditTitle").textContent = `"${profile.name}" 프로필 편집`;
   document.getElementById("profileNameInput").value = profile.name;

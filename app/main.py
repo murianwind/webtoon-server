@@ -83,9 +83,18 @@ async def cache_control_for_api(request, call_next):
 
 DEVICE_COOKIE_NAME = "webtoon_device"
 
-# 비밀번호 없이 항상 통과시켜야 하는 경로 - 로그인 화면 자체와 로그인 API, 그리고 로그인
-# 화면이 그리는 데 필요한 최소한의 정적 자원.
-_ADMIN_GATE_ALLOWLIST = ("/login.html", "/api/auth/login", "/favicon.ico", "/manifest.json", "/icons/", "/style.css")
+# 비밀번호 없이 항상 통과시켜야 하는 경로 - 로그인 화면 자체와 로그인 API, 로그인
+# 화면이 그리는 데 필요한 최소한의 정적 자원, 그리고 브라우저 쿠키가 없는 외부
+# 연동(디스코드 알림 봇 등)이 호출하는 /api/lookup/latest.
+_ADMIN_GATE_ALLOWLIST = (
+    "/login.html",
+    "/api/auth/login",
+    "/favicon.ico",
+    "/manifest.json",
+    "/icons/",
+    "/style.css",
+    "/api/lookup/latest",
+)
 
 
 @app.middleware("http")

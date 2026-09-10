@@ -10,7 +10,7 @@ profile이 None(관리자)일 때는 access_control이 그대로 db.py에 위임
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -72,7 +72,7 @@ def profiles_allowed_ids(profile: dict | None) -> set[str] | None:
     return profiles_module.get_allowed_series_ids(profile["id"])
 
 
-@router.get("/api/lookup/latest")
+@router.get("/api/lookup/latest", dependencies=[Depends(access_control.require_admin)])
 def lookup_latest(series: str, platform: str | None = None):
     """
     hermes(webtoon_checker.py 등)가 디스코드 알림에 붙일 바로가기 URL을 구할 때 쓰는 API.
@@ -80,7 +80,10 @@ def lookup_latest(series: str, platform: str | None = None):
     시리즈가 있어 구분이 필요할 때만 넘기면 된다. (platform을 필수로 요구하면, 서버 쪽
     /library 폴더명을 나중에 바꿀 때마다 호출하는 쪽 코드도 같이 고쳐야 하는 문제가 있었음)
 
-    관리자 전용 기능이라(알림 봇은 관리자 쪽 데이터만 다룸) 프로필 인식은 하지 않는다.
+    관리자 전용 기능이라(알림 봇은 관리자 쪽 데이터만 다룸) 공유 프로필에서는 아예 막는다
+    (require_admin). 또한 알림 봇처럼 브라우저 쿠키가 없는 외부 서비스가 호출하는
+    경로라, main.py의 관리자 비밀번호 게이트에서도 예외로 빼둬야 한다(그렇지 않으면
+    이 API를 쓰는 외부 연동이 전부 401로 막혀버린다).
     """
     for candidate in catalog.get_series_map().values():
         if candidate["title"] != series:
