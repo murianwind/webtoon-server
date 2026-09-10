@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import access_requests, auth
+from conftest import make_chapter_zip
 
 
 @pytest.fixture
@@ -127,3 +128,38 @@ def test_reissue_token_changes_the_shareable_link(admin_client):
     """THEN 새 토큰이 나오고, 기존 토큰과 다르다"""
     new_token = r.json()["token"]
     assert new_token != old_token
+
+
+def test_series_catalog_includes_writer_and_age_rating(admin_client, library):
+    """GIVEN info.xml이 있는 시리즈와 없는 시리즈가 섞여 있을 때"""
+    make_chapter_zip(str(library / "naver" / "정보없음" / "001.zip"))
+    kakao_dir = library / "kakao" / "정보있음"
+    make_chapter_zip(str(kakao_dir / "001.zip"))
+    (kakao_dir / "info.xml").write_text(
+        "<ComicInfo><Writer>김작가</Writer><AgeRating>15세 이용가</AgeRating></ComicInfo>", encoding="utf-8"
+    )
+    admin_client.post("/api/rescan")
+
+    """WHEN 시리즈 카탈로그(선택 화면용)를 조회하면"""
+    items = admin_client.get("/api/admin/series-catalog").json()
+
+    """THEN 저자/연령등급이 있으면 그대로, 없으면 None으로 나온다"""
+    with_info = next(i for i in items if i["title"] == "정보있음")
+    without_info = next(i for i in items if i["title"] == "정보없음")
+    assert with_info["writer"] == "김작가"
+    assert with_info["age_rating"] == "15세 이용가"
+    assert without_info["writer"] is None
+    assert without_info["age_rating"] is None
+
+
+def test_age_ratings_endpoint_reports_has_unrated(admin_client, library):
+    """GIVEN 네이버는 전부 연령정보가 없을 때"""
+    make_chapter_zip(str(library / "naver" / "웹툰" / "001.zip"))
+    admin_client.post("/api/rescan")
+
+    """WHEN 연령등급 집계를 조회하면"""
+    result = admin_client.get("/api/admin/age-ratings").json()
+
+    """THEN 네이버는 실제 등급 목록은 비어있고, has_unrated는 true다"""
+    assert result["naver"]["ratings"] == []
+    assert result["naver"]["has_unrated"] is True

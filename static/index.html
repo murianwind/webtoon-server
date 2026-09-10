@@ -72,9 +72,58 @@
       </div>
       <input id="restoreFileInput" type="file" accept="application/json" style="display:none">
     </div>
+    <div class="settings-section" id="profilesSection" style="display:none">
+      <div class="settings-section-title">공유 프로필</div>
+      <div class="settings-hint">특정 사람에게 특정 웹툰만 공개하는 개인별 링크를 만듭니다.</div>
+      <div id="profilesList" class="lib-list"></div>
+      <button id="addProfileBtn" class="mark-all-btn ghost">+ 프로필 추가</button>
+    </div>
   </div>
 </aside>
 <div id="settingsOverlay" class="sidebar-overlay"></div>
+
+<aside id="profileEditPanel" class="sidebar">
+  <div class="sidebar-header">
+    <span id="profileEditTitle">프로필 편집</span>
+    <button id="profileEditClose" class="sidebar-close" aria-label="닫기">×</button>
+  </div>
+  <div class="settings-panel-body">
+    <div class="settings-section">
+      <div class="settings-section-title">이름</div>
+      <input id="profileNameInput" class="profile-text-input" placeholder="예: 딸">
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">전용 URL</div>
+      <div class="profile-url-row">
+        <div id="profileUrlDisplay" class="profile-url-display"></div>
+        <button id="profileCopyUrlBtn" class="mark-all-btn ghost">복사</button>
+      </div>
+      <button id="profileReissueBtn" class="mark-all-btn danger">URL 재발급</button>
+      <div class="settings-hint">재발급하면 기존 링크는 즉시 무효화됩니다. 이름/허용목록/읽은 기록은 그대로 유지됩니다.</div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">둘러보기에 보여줄 연령 등급</div>
+      <div id="profileBrowseFiltersList" class="profile-filter-matrix"></div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">대기중인 요청</div>
+      <div id="profileRequestsList" class="lib-list"></div>
+    </div>
+    <div class="settings-section">
+      <div class="settings-section-title">허용 시리즈</div>
+      <div class="profile-series-filter-row">
+        <select id="profileSeriesPlatformFilter"></select>
+        <select id="profileSeriesAgeFilter"></select>
+      </div>
+      <div id="profileAllowedSeriesList" class="profile-series-checklist"></div>
+    </div>
+    <div class="settings-section profile-edit-actions">
+      <button id="profileSaveBtn" class="mark-all-btn">저장</button>
+      <button id="profileDeleteBtn" class="mark-all-btn danger">프로필 삭제</button>
+    </div>
+  </div>
+</aside>
+<div id="profileEditOverlay" class="sidebar-overlay"></div>
 
 <aside id="chapterSidebar" class="sidebar">
   <div class="sidebar-header">
@@ -532,6 +581,8 @@ async function init() {
     document.getElementById("profileViewTabs").style.display = "flex";
     document.getElementById("profileTabMine").addEventListener("click", () => showProfileTab("mine"));
     document.getElementById("profileTabBrowse").addEventListener("click", () => showProfileTab("browse"));
+  } else {
+    initProfilesAdminUI(); // 관리자 화면에서만 - PROFILES_ENABLED 켜져 있으면 섹션을 보여줌
   }
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
   const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), fetchScanStatus()]);
@@ -961,13 +1012,272 @@ chapterSidebarOverlay.addEventListener("click", closeChapterSidebar);
 // 최신 데이터를 다시 불러온다.
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) {
-    hideOpenLoading(); // 리더로 넘어가려고 띄워둔 로딩 오버레이가 bfcache에 그대로
-    // 남아있을 수 있음 - 제스처/백스페이스로 돌아오면 이 페이지를 새로 불러오는 게
-    // 아니라 나가기 직전 상태를 그대로 복원하기 때문에, 그때 떠있던 오버레이도
-    // 그대로 다시 보이는 것 - 데이터 새로고침과 별개로 반드시 같이 닫아줘야 한다.
+    hideOpenLoading();
     load();
   }
 });
+
+// =====================================================================
+// 공유 프로필 관리 (관리자 화면 전용). PROFILES_ENABLED가 꺼져있으면
+// /api/admin/profiles 자체가 404라서, 그걸로 기능 켜짐 여부를 판단하고
+// 꺼져있으면 섹션 자체를 숨긴 채로 조용히 끝난다.
+// =====================================================================
+
+const NO_AGE_RATING = "__no_rating__"; // profiles.py의 같은 이름 상수와 반드시 일치해야 함
+let profileAgeRatingsCache = null;
+let profileSeriesCatalogCache = null;
+let editingProfileId = null;
+
+async function initProfilesAdminUI() {
+  try {
+    const res = await fetch("/api/admin/profiles");
+    if (!res.ok) return;
+  } catch (e) {
+    return;
+  }
+  document.getElementById("profilesSection").style.display = "";
+  document.getElementById("addProfileBtn").addEventListener("click", createNewProfile);
+  document.getElementById("profileEditClose").addEventListener("click", closeProfileEditor);
+  document.getElementById("profileEditOverlay").addEventListener("click", closeProfileEditor);
+  document.getElementById("profileCopyUrlBtn").addEventListener("click", copyProfileUrl);
+  document.getElementById("profileReissueBtn").addEventListener("click", reissueProfileToken);
+  document.getElementById("profileSaveBtn").addEventListener("click", saveProfileEditor);
+  document.getElementById("profileDeleteBtn").addEventListener("click", deleteCurrentProfile);
+  document.getElementById("profileSeriesPlatformFilter").addEventListener("change", () => renderProfileSeriesChecklist());
+  document.getElementById("profileSeriesAgeFilter").addEventListener("change", () => renderProfileSeriesChecklist());
+  await refreshProfilesList();
+}
+
+async function refreshProfilesList() {
+  const res = await fetch("/api/admin/profiles");
+  const list = await res.json();
+  const container = document.getElementById("profilesList");
+  container.innerHTML = "";
+  for (const profile of list) {
+    const row = document.createElement("div");
+    row.className = "lib-row";
+    const badge = profile.pending_request_count > 0
+      ? `<span class="profile-pending-badge">요청 ${profile.pending_request_count}</span>`
+      : "";
+    row.innerHTML = `
+      <span class="lib-name">${profile.name}${badge} <span class="profile-allowed-count">허용 ${profile.allowed_count}개</span></span>
+      <button class="lib-action-btn">편집</button>
+    `;
+    row.querySelector(".lib-action-btn").addEventListener("click", () => openProfileEditor(profile.id));
+    container.appendChild(row);
+  }
+}
+
+async function createNewProfile() {
+  const name = prompt("프로필 이름을 입력하세요 (예: 딸)");
+  if (!name || !name.trim()) return;
+  const res = await fetch("/api/admin/profiles", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  if (!res.ok) return;
+  const created = await res.json();
+  await refreshProfilesList();
+  openProfileEditor(created.id);
+}
+
+async function openProfileEditor(profileId) {
+  editingProfileId = profileId;
+  const [profilesRes, filtersRes, allowedRes, requestsRes] = await Promise.all([
+    fetch("/api/admin/profiles"),
+    fetch(`/api/admin/profiles/${profileId}/browse-filters`),
+    fetch(`/api/admin/profiles/${profileId}/allowed-series`),
+    fetch(`/api/admin/profiles/${profileId}/requests`),
+  ]);
+  const profilesList = await profilesRes.json();
+  const profile = profilesList.find((p) => p.id === profileId);
+  const browseFilters = await filtersRes.json();
+  const allowedIds = new Set(await allowedRes.json());
+  const requests = await requestsRes.json();
+
+  if (!profileAgeRatingsCache) {
+    profileAgeRatingsCache = await (await fetch("/api/admin/age-ratings")).json();
+  }
+  if (!profileSeriesCatalogCache) {
+    profileSeriesCatalogCache = await (await fetch("/api/admin/series-catalog")).json();
+  }
+
+  document.getElementById("profileEditTitle").textContent = `"${profile.name}" 프로필 편집`;
+  document.getElementById("profileNameInput").value = profile.name;
+  document.getElementById("profileUrlDisplay").textContent = `${location.origin}/p/${profile.token}`;
+
+  renderProfileBrowseFilters(browseFilters);
+  renderProfileRequests(requests, profileId);
+  populateProfileSeriesFilterOptions();
+  document.getElementById("profileAllowedSeriesList").dataset.allowed = JSON.stringify([...allowedIds]);
+  renderProfileSeriesChecklist();
+
+  document.getElementById("profileEditPanel").classList.add("open");
+  document.getElementById("profileEditOverlay").classList.add("open");
+}
+
+function closeProfileEditor() {
+  document.getElementById("profileEditPanel").classList.remove("open");
+  document.getElementById("profileEditOverlay").classList.remove("open");
+  editingProfileId = null;
+}
+
+function renderProfileBrowseFilters(currentFilters) {
+  const currentSet = new Set(currentFilters.map((f) => `${f.platform}::${f.age_rating}`));
+  const container = document.getElementById("profileBrowseFiltersList");
+  container.innerHTML = "";
+  for (const [platform, info] of Object.entries(profileAgeRatingsCache)) {
+    const group = document.createElement("div");
+    group.className = "profile-filter-group";
+    const labels = [...info.ratings, ...(info.has_unrated ? ["정보없음"] : [])];
+    const values = [...info.ratings, ...(info.has_unrated ? [NO_AGE_RATING] : [])];
+    const checkboxes = values
+      .map((value, i) => {
+        const checked = currentSet.has(`${platform}::${value}`) ? "checked" : "";
+        return `<label><input type="checkbox" data-platform="${platform}" data-age="${value}" ${checked}> ${labels[i]}</label>`;
+      })
+      .join("");
+    group.innerHTML = `<div class="profile-filter-platform">${platform}</div>${checkboxes}`;
+    container.appendChild(group);
+  }
+}
+
+function collectProfileBrowseFilters() {
+  const filters = [];
+  document.querySelectorAll("#profileBrowseFiltersList input[type=checkbox]:checked").forEach((el) => {
+    filters.push({ platform: el.dataset.platform, age_rating: el.dataset.age });
+  });
+  return filters;
+}
+
+function renderProfileRequests(requests, profileId) {
+  const container = document.getElementById("profileRequestsList");
+  const pending = requests.filter((r) => r.status === "pending");
+  if (!pending.length) {
+    container.innerHTML = `<div class="settings-hint">대기중인 요청이 없습니다.</div>`;
+    return;
+  }
+  container.innerHTML = "";
+  for (const req of pending) {
+    const series = profileSeriesCatalogCache.find((s) => s.id === req.series_id);
+    const row = document.createElement("div");
+    row.className = "lib-row";
+    row.innerHTML = `
+      <span class="lib-name">${series ? series.title : req.series_id}</span>
+      <button class="lib-action-btn add" data-action="approve">허용</button>
+      <button class="lib-action-btn" data-action="reject">거부</button>
+    `;
+    row.querySelector('[data-action="approve"]').addEventListener("click", async () => {
+      const allowedIds = new Set(JSON.parse(document.getElementById("profileAllowedSeriesList").dataset.allowed || "[]"));
+      allowedIds.add(req.series_id);
+      await fetch(`/api/admin/profiles/${profileId}/allowed-series`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ series_ids: [...allowedIds] }),
+      });
+      openProfileEditor(profileId);
+    });
+    row.querySelector('[data-action="reject"]').addEventListener("click", async () => {
+      await fetch(`/api/admin/profiles/${profileId}/requests/${req.series_id}/reject`, { method: "POST" });
+      openProfileEditor(profileId);
+    });
+    container.appendChild(row);
+  }
+}
+
+function populateProfileSeriesFilterOptions() {
+  const platformSelect = document.getElementById("profileSeriesPlatformFilter");
+  const ageSelect = document.getElementById("profileSeriesAgeFilter");
+  const platforms = [...new Set(profileSeriesCatalogCache.map((s) => s.platform))].sort();
+  platformSelect.innerHTML = `<option value="">플랫폼 전체</option>` + platforms.map((p) => `<option value="${p}">${p}</option>`).join("");
+  const ages = [...new Set(profileSeriesCatalogCache.map((s) => s.age_rating).filter(Boolean))].sort();
+  ageSelect.innerHTML = `<option value="">연령 전체</option>` + ages.map((a) => `<option value="${a}">${a}</option>`).join("");
+}
+
+function renderProfileSeriesChecklist() {
+  const container = document.getElementById("profileAllowedSeriesList");
+  // 지금 필터로 안 보이게 된 항목의 체크 상태도 잃지 않도록, 화면을 새로 그리기 전에
+  // "지금 보이는 것들"의 현재 체크 상태를 먼저 dataset(전체 허용목록)에 반영해둔다.
+  const allowedIds = new Set(JSON.parse(container.dataset.allowed || "[]"));
+  container.querySelectorAll("input[type=checkbox]").forEach((el) => {
+    if (el.checked) allowedIds.add(el.value);
+    else allowedIds.delete(el.value);
+  });
+  container.dataset.allowed = JSON.stringify([...allowedIds]);
+
+  const platformFilter = document.getElementById("profileSeriesPlatformFilter").value;
+  const ageFilter = document.getElementById("profileSeriesAgeFilter").value;
+  let list = profileSeriesCatalogCache;
+  if (platformFilter) list = list.filter((s) => s.platform === platformFilter);
+  if (ageFilter) list = list.filter((s) => s.age_rating === ageFilter);
+
+  container.innerHTML = "";
+  for (const series of list) {
+    const label = document.createElement("label");
+    label.className = "profile-series-checkbox-row";
+    const checked = allowedIds.has(series.id) ? "checked" : "";
+    const sub = [series.platform, series.age_rating || "정보없음"].join(" · ");
+    label.innerHTML = `<input type="checkbox" value="${series.id}" ${checked}> ${series.title} <span class="profile-series-sub">${sub}</span>`;
+    container.appendChild(label);
+  }
+}
+
+function collectProfileAllowedSeriesIds() {
+  const container = document.getElementById("profileAllowedSeriesList");
+  const allowedIds = new Set(JSON.parse(container.dataset.allowed || "[]"));
+  container.querySelectorAll("input[type=checkbox]").forEach((el) => {
+    if (el.checked) allowedIds.add(el.value);
+    else allowedIds.delete(el.value);
+  });
+  return [...allowedIds];
+}
+
+async function saveProfileEditor() {
+  if (!editingProfileId) return;
+  const name = document.getElementById("profileNameInput").value.trim();
+  if (!name) return;
+
+  await fetch(`/api/admin/profiles/${editingProfileId}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  await fetch(`/api/admin/profiles/${editingProfileId}/browse-filters`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filters: collectProfileBrowseFilters() }),
+  });
+  await fetch(`/api/admin/profiles/${editingProfileId}/allowed-series`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ series_ids: collectProfileAllowedSeriesIds() }),
+  });
+
+  closeProfileEditor();
+  refreshProfilesList();
+}
+
+async function deleteCurrentProfile() {
+  if (!editingProfileId) return;
+  if (!confirm("이 프로필을 삭제하시겠습니까? 그 프로필의 진행률/읽음기록도 함께 사라지고, 되돌릴 수 없습니다.")) return;
+  await fetch(`/api/admin/profiles/${editingProfileId}`, { method: "DELETE" });
+  closeProfileEditor();
+  refreshProfilesList();
+}
+
+async function reissueProfileToken() {
+  if (!editingProfileId) return;
+  if (!confirm("URL을 재발급하면 기존 링크는 즉시 무효화됩니다. 계속하시겠습니까?")) return;
+  const res = await fetch(`/api/admin/profiles/${editingProfileId}/reissue-token`, { method: "POST" });
+  const { token } = await res.json();
+  document.getElementById("profileUrlDisplay").textContent = `${location.origin}/p/${token}`;
+}
+
+function copyProfileUrl() {
+  const text = document.getElementById("profileUrlDisplay").textContent;
+  navigator.clipboard.writeText(text).catch(() => {});
+}
 
 init();
 </script>

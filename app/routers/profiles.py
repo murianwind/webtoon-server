@@ -8,10 +8,53 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import access_requests, profile_progress, profiles
+from .. import access_requests, catalog, profile_progress, profiles
 
 log = logging.getLogger("webtoon-server")
 router = APIRouter()
+
+
+@router.get("/api/admin/series-catalog")
+def series_catalog():
+    """
+    프로필의 허용 시리즈 선택 화면에서만 쓰는 전체 시리즈 목록 - 플랫폼/저자/연령등급까지
+    포함한다. 메인 목록 API(/api/series)는 기기마다 매번 받는 응답이라 여기에 안 쓰는
+    필드를 끼워넣지 않고, 이 화면에서만 필요한 정보를 담은 별도 엔드포인트로 뺐다.
+    """
+    result = []
+    for series in catalog.get_series_map().values():
+        info = series.get("info") or {}
+        result.append(
+            {
+                "id": series["id"],
+                "platform": series["platform"],
+                "title": series["title"],
+                "writer": info.get("writer") or None,
+                "age_rating": info.get("age_rating") or None,
+            }
+        )
+    result.sort(key=lambda s: (s["platform"], s["title"]))
+    return result
+
+
+@router.get("/api/admin/age-ratings")
+def age_ratings():
+    """
+    지금 라이브러리에 실제로 존재하는 플랫폼별 연령등급 값 목록. 프로필의 "둘러보기
+    연령 필터" 화면에서 체크박스를 뭘로 그릴지 결정하는 용도 - DB에 저장하지 않고
+    스캔 결과에서 매번 즉시 집계하므로 항상 최신 상태를 반영한다.
+
+    has_unrated: 그 플랫폼에 연령정보가 없는 시리즈가 하나라도 있으면 true - 이때만
+    화면에 "정보없음" 체크박스를 따로 보여주면 된다(profiles.NO_AGE_RATING 값으로 저장).
+    """
+    raw = catalog.get_platform_age_ratings()
+    result = {}
+    for platform, ratings in raw.items():
+        result[platform] = {
+            "ratings": sorted(r for r in ratings if r is not None),
+            "has_unrated": None in ratings,
+        }
+    return result
 
 
 class CreateProfileIn(BaseModel):
