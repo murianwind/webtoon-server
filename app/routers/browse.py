@@ -47,7 +47,7 @@ def browse(request: Request):
                 "id": series["id"],
                 "platform": series["platform"],
                 "title": series["title"],
-                "cover_url": f"/api/series/{series['id']}/cover",
+                "cover_url": f"{access_control.profile_path_prefix(profile)}/api/series/{series['id']}/cover",
                 "request_status": status,  # None | "pending" | "rejected"
             }
         )

@@ -33,6 +33,11 @@
 </div>
 <div id="filterTabs" class="filter-tabs"></div>
 
+<div id="profileViewTabs" class="filter-tabs" style="display:none">
+  <button class="filter-tab active" id="profileTabMine">내 웹툰</button>
+  <button class="filter-tab" id="profileTabBrowse">둘러보기</button>
+</div>
+
 <aside id="settingsPanel" class="sidebar">
   <div class="sidebar-header">
     <span>시리즈 폴더 / 백업</span>
@@ -90,8 +95,36 @@
 </div>
 
 <main id="grid" class="grid"></main>
+<main id="browseGrid" class="grid" style="display:none"></main>
 
 <script>
+// 공유 프로필 링크("/p/<토큰>/...")로 접속했는지 감지. 있으면 이 화면에서 나가는 모든
+// /api/* 요청에 자동으로 그 토큰 경로를 붙인다 - fetch()를 감싸는 방식이라, 이 파일
+// 안의 수십 개 fetch("/api/...") 호출을 하나하나 고칠 필요 없이 여기 한 곳에서 처리된다.
+// (단, <img src="cover_url">처럼 fetch를 안 거치는 링크는 서버가 애초에 토큰이 붙은
+// 경로로 내려주므로 - series.py의 profile_path_prefix 참고 - 여기서 손댈 필요 없음.)
+const PROFILE_TOKEN = (() => {
+  const match = location.pathname.match(/^\/p\/([^/]+)/);
+  return match ? match[1] : null;
+})();
+const IS_PROFILE_VIEW = PROFILE_TOKEN !== null;
+
+if (IS_PROFILE_VIEW) {
+  const _originalFetch = window.fetch.bind(window);
+  window.fetch = (url, options) => {
+    if (typeof url === "string" && url.startsWith("/api/")) {
+      url = `/p/${PROFILE_TOKEN}${url}`;
+    }
+    return _originalFetch(url, options);
+  };
+}
+
+// 프로필 화면(공유 링크로 들어온 경우) 안에서 다른 화면으로 이동할 때도 이 토큰 경로를
+// 유지해야 한다 - 예: 리더로 넘어갈 때 "/reader.html..."이 아니라 "/p/<토큰>/reader.html..."로.
+function withProfilePrefix(path) {
+  return IS_PROFILE_VIEW ? `/p/${PROFILE_TOKEN}${path}` : path;
+}
+
 const LS_QUERY = "webtoon:index:query";
 const LS_SORT = "webtoon:index:sort";
 const FILTER_KEY = "status_filter"; // 서버(app_settings)에 저장 -> 모든 기기에서 동일하게 적용
@@ -317,7 +350,7 @@ async function goContinue(seriesId) {
     const res = await fetch(`/api/series/${encodeURIComponent(seriesId)}/continue`);
     if (!res.ok) throw new Error("continue lookup failed");
     const data = await res.json();
-    location.href = `/reader.html?series=${encodeURIComponent(seriesId)}&chapter=${encodeURIComponent(data.chapter_id)}&page=${data.page_index}`;
+    location.href = withProfilePrefix(`/reader.html?series=${encodeURIComponent(seriesId)}&chapter=${encodeURIComponent(data.chapter_id)}&page=${data.page_index}`);
   } catch (e) {
     // 이동 실패 시 아무것도 하지 않음 (콘솔에만 남김)
     console.error(e);
@@ -494,12 +527,86 @@ function updateStickyOffsets() {
 window.addEventListener("resize", updateStickyOffsets);
 
 async function init() {
+  if (IS_PROFILE_VIEW) {
+    document.getElementById("settingsBtn").style.display = "none"; // 관리자 전용 기능이므로 프로필 화면엔 안 보임
+    document.getElementById("profileViewTabs").style.display = "flex";
+    document.getElementById("profileTabMine").addEventListener("click", () => showProfileTab("mine"));
+    document.getElementById("profileTabBrowse").addEventListener("click", () => showProfileTab("browse"));
+  }
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
   const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (ok) render();
   updateStickyOffsets();
   maybeStartScanPolling();
+}
+
+// ---------- 공유 프로필: "내 웹툰" / "둘러보기" 탭 ----------
+
+function showProfileTab(name) {
+  const mineBtn = document.getElementById("profileTabMine");
+  const browseBtn = document.getElementById("profileTabBrowse");
+  mineBtn.classList.toggle("active", name === "mine");
+  browseBtn.classList.toggle("active", name === "browse");
+  document.getElementById("grid").style.display = name === "mine" ? "" : "none";
+  document.getElementById("filterTabs").style.display = name === "mine" ? "" : "none";
+  document.getElementById("browseGrid").style.display = name === "browse" ? "" : "none";
+  if (name === "browse") fetchAndRenderBrowse();
+}
+
+async function fetchAndRenderBrowse() {
+  const grid = document.getElementById("browseGrid");
+  grid.innerHTML = `<div class="empty-state">불러오는 중...</div>`;
+  try {
+    const res = await fetch("/api/browse");
+    if (!res.ok) throw new Error("browse fetch failed");
+    const items = await res.json();
+    renderBrowseGrid(items);
+  } catch (e) {
+    grid.innerHTML = `<div class="empty-state">불러오지 못했습니다.</div>`;
+  }
+}
+
+function renderBrowseGrid(items) {
+  const grid = document.getElementById("browseGrid");
+  if (!items.length) {
+    grid.innerHTML = `<div class="empty-state">둘러볼 수 있는 웹툰이 없습니다.</div>`;
+    return;
+  }
+  grid.innerHTML = "";
+  for (const item of items) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const buttonLabel = item.request_status === "pending" ? "요청됨" : item.request_status === "rejected" ? "거부됨" : "보여주세요";
+    const buttonDisabled = item.request_status !== null;
+    card.innerHTML = `
+      <div class="cover-wrap">
+        <span class="platform-tag">${item.platform}</span>
+        <img src="${item.cover_url}" alt="${item.title}" loading="lazy">
+      </div>
+      <div class="title">${item.title}</div>
+      <button class="browse-request-btn" ${buttonDisabled ? "disabled" : ""}>${buttonLabel}</button>
+    `;
+    card.querySelector(".browse-request-btn").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const btn = e.target;
+      btn.disabled = true;
+      btn.textContent = "요청 중...";
+      try {
+        const res = await fetch(`/api/browse/${item.id}/request`, { method: "POST" });
+        if (res.ok) {
+          btn.textContent = "요청됨";
+        } else {
+          btn.textContent = "보여주세요";
+          btn.disabled = false;
+        }
+      } catch (e2) {
+        btn.textContent = "보여주세요";
+        btn.disabled = false;
+      }
+    });
+    grid.appendChild(card);
+  }
 }
 
 searchInput.addEventListener("input", (e) => {

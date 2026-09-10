@@ -68,6 +68,18 @@ def test_profile_series_list_only_shows_allowed(profile_setup):
     assert titles == ["허용웹툰"]
 
 
+def test_profile_cover_url_is_prefixed_with_profile_path(profile_setup):
+    """GIVEN 허용된 시리즈가 있을 때"""
+    """WHEN 그 프로필 링크로 목록을 조회하면"""
+    r = profile_setup["profile"].get("/api/series")
+
+    """THEN cover_url 자체가 "/p/<토큰>/api/..."로 시작한다 - <img src>는 fetch를 안
+    거치므로, 서버가 애초에 이 경로로 내려줘야 그 프로필 범위 안에서 계속 열린다"""
+    cover_url = r.json()[0]["cover_url"]
+    assert cover_url.startswith("/p/")
+    assert cover_url.endswith("/cover")
+
+
 def test_profile_cannot_access_blocked_series_directly(profile_setup):
     """GIVEN B는 허용 안 된 시리즈일 때"""
     blocked_id = profile_setup["blocked_id"]

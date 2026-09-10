@@ -57,7 +57,7 @@ def list_series(request: Request):
                 "unread_count": unread,
                 "progress_display": progress_display,
                 "latest_update": series["latest_mtime"],
-                "cover_url": f"/api/series/{series['id']}/cover",
+                "cover_url": f"{access_control.profile_path_prefix(profile)}/api/series/{series['id']}/cover",
             }
         )
     result.sort(key=lambda item: (item["platform"], item["title"]))

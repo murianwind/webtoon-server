@@ -71,3 +71,11 @@ def clear_all_read_chapters(profile: dict | None, series_id: str) -> None:
         db.clear_all_read_chapters(series_id)
     else:
         profile_progress.clear_all_read_chapters(profile["id"], series_id)
+
+
+def profile_path_prefix(profile: dict | None) -> str:
+    """profile이 있으면 "/p/<토큰>", 없으면(관리자) 빈 문자열. <img src> 등 JS fetch를
+    안 거치는 링크(커버 URL 등)를 서버가 만들어줄 때, 그 프로필의 공유 경로 안에서
+    계속 열리도록 이 접두사를 붙여서 내려줘야 한다 - fetch는 프론트엔드에서 자체적으로
+    감싸서 처리하지만, <img src>는 그럴 수 없어 서버가 애초에 맞는 경로로 내려줘야 한다."""
+    return f"/p/{profile['token']}" if profile else ""

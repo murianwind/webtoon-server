@@ -57,12 +57,34 @@
 <div id="sidebarOverlay" class="sidebar-overlay"></div>
 
 <script>
+// index.html과 동일한 방식 - 공유 프로필 링크("/p/<토큰>/...")로 접속했는지 감지해서,
+// 이 화면에서 나가는 모든 /api/* 요청에 자동으로 그 토큰 경로를 붙인다.
+const PROFILE_TOKEN = (() => {
+  const match = location.pathname.match(/^\/p\/([^/]+)/);
+  return match ? match[1] : null;
+})();
+const IS_PROFILE_VIEW = PROFILE_TOKEN !== null;
+
+if (IS_PROFILE_VIEW) {
+  const _originalFetch = window.fetch.bind(window);
+  window.fetch = (url, options) => {
+    if (typeof url === "string" && url.startsWith("/api/")) {
+      url = `/p/${PROFILE_TOKEN}${url}`;
+    }
+    return _originalFetch(url, options);
+  };
+}
+
+function withProfilePrefix(path) {
+  return IS_PROFILE_VIEW ? `/p/${PROFILE_TOKEN}${path}` : path;
+}
+
 const params = new URLSearchParams(location.search);
 const seriesId = params.get("series");
 const initialChapterId = params.get("chapter");
 const initialPage = parseInt(params.get("page") || "0", 10) || 0;
 
-document.getElementById("backLink").href = "/";
+document.getElementById("backLink").href = withProfilePrefix("/");
 
 let seriesData = null;       // { title, platform, chapters: [...] } (오름차순)
 let loadedChapters = [];     // 이 화면에 이미 붙인 회차들 (진행 순서대로)
@@ -243,7 +265,7 @@ async function leaveReaderForList(event) {
   document.body.classList.remove("reader-fullscreen");
   await exitBrowserFullscreen();
   updateFullscreenButton();
-  window.location.href = "/";
+  window.location.href = withProfilePrefix("/");
 }
 
 document.getElementById("backLink").addEventListener("click", leaveReaderForList);
@@ -854,7 +876,7 @@ function appendEndCard() {
   const el = document.createElement("div");
   el.className = "next-chapter";
   el.innerHTML = `
-    <a class="next-card" href="/">
+    <a class="next-card" href="${withProfilePrefix("/")}">
       <span class="eyebrow">마지막 화입니다</span>
       <span class="next-title">웹툰 목록으로 →</span>
     </a>

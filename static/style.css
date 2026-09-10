@@ -1020,3 +1020,23 @@ a {
   color: var(--text-dim);
   font-size: 13px;
 }
+
+/* ---------- 공유 프로필: 둘러보기 요청 버튼 (index.html) ---------- */
+
+.browse-request-btn {
+  width: 100%;
+  margin-top: 6px;
+  background: none;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  padding: 5px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.browse-request-btn:disabled {
+  border-color: var(--border);
+  color: var(--text-dim);
+  cursor: default;
+}
