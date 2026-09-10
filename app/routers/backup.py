@@ -6,14 +6,16 @@ import json
 import logging
 from datetime import date, datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import db, services
+from .. import access_control, db, services
 
 log = logging.getLogger("webtoon-server")
-router = APIRouter()
+# 백업/복원은 관리자 전용 데이터(공용 진행률·설정)를 다루므로, 공유 프로필에게는
+# 이 기능 자체가 존재하지 않아야 한다 - library.py와 같은 이유로 라우터 전체에 적용.
+router = APIRouter(dependencies=[Depends(access_control.require_admin)])
 
 
 @router.get("/api/backup")

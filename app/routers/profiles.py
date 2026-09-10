@@ -5,13 +5,15 @@ PROFILES_ENABLED가 꺼져있으면 main.py가 이 라우터 자체를 등록하
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from .. import access_requests, catalog, profile_progress, profiles
+from .. import access_control, access_requests, catalog, profile_progress, profiles
 
 log = logging.getLogger("webtoon-server")
-router = APIRouter()
+# 프로필 관리(생성/수정/삭제, 요청 승인/거부 등)는 전부 관리자 전용이다 - 공유 프로필이
+# 자기 링크로 이 라우트들을 직접 호출해서 다른 프로필을 보거나 조작하는 걸 막는다.
+router = APIRouter(dependencies=[Depends(access_control.require_admin)])
 
 
 @router.get("/api/admin/series-catalog")

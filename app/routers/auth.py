@@ -5,13 +5,15 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from .. import auth
+from .. import access_control, auth
 
 log = logging.getLogger("webtoon-server")
-router = APIRouter()
+# 로그인/기기 관리는 관리자 전용 개념이다 - 공유 프로필이 "/p/<토큰>/api/auth/..."로
+# 이 라우트들을 직접 호출해서 관리자 기기 목록을 보거나 삭제하는 걸 막는다.
+router = APIRouter(dependencies=[Depends(access_control.require_admin)])
 
 DEVICE_COOKIE_NAME = "webtoon_device"
 DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1년

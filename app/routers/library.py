@@ -5,13 +5,16 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from .. import catalog, db, overlap, scan, services
+from .. import access_control, catalog, db, overlap, scan, services
 
 log = logging.getLogger("webtoon-server")
-router = APIRouter()
+# 이 라우터의 모든 라우트(재스캔, 폴더 관리)는 관리자 전용이다 - 공유 프로필에게는
+# 이런 기능 자체가 존재하지 않아야 하므로, 라우터 전체에 한 번에 적용한다(라우트마다
+# 따로따로 확인 코드를 넣으면 하나라도 빠뜨릴 위험이 있음).
+router = APIRouter(dependencies=[Depends(access_control.require_admin)])
 
 
 @router.post("/api/rescan")

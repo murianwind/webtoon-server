@@ -602,6 +602,7 @@ window.addEventListener("resize", updateStickyOffsets);
 async function init() {
   if (IS_PROFILE_VIEW) {
     document.getElementById("settingsBtn").style.display = "none"; // 관리자 전용 기능이므로 프로필 화면엔 안 보임
+    document.getElementById("rescanBtn").style.display = "none"; // 재스캔도 관리자 전용(서버 API 자체도 막혀있음)
     document.getElementById("profileViewTabs").style.display = "flex";
     document.getElementById("profileTabMine").addEventListener("click", () => showProfileTab("mine"));
     document.getElementById("profileTabBrowse").addEventListener("click", () => showProfileTab("browse"));

@@ -97,3 +97,12 @@ def profile_path_prefix(profile: dict | None) -> str:
     계속 열리도록 이 접두사를 붙여서 내려줘야 한다 - fetch는 프론트엔드에서 자체적으로
     감싸서 처리하지만, <img src>는 그럴 수 없어 서버가 애초에 맞는 경로로 내려줘야 한다."""
     return f"/p/{profile['token']}" if profile else ""
+
+
+def require_admin(request: Request) -> None:
+    """재스캔/폴더 관리처럼 관리자 전용인 라우터에 통째로 붙이는 의존성. 공유 프로필
+    경로("/p/<토큰>/...")로 들어온 요청이면 404 - 프로필 화면 자체에 이런 기능이
+    존재한다는 걸 알 수조차 없게 한다(단순히 "권한 없음"이 아니라 "그런 기능이
+    아예 없다"는 응답을 준다는 뜻)."""
+    if get_profile(request) is not None:
+        raise HTTPException(404, "not available for shared profiles")
