@@ -212,10 +212,13 @@ def list_chapters(series_id: str):
 
     chapters_out = []
     for chapter in chapters:
-        is_read = chapter["id"] in read_ids
-        # "읽는 중"은 순서와 무관하게 지금 보고 있던 바로 그 회차 하나 - 이미 읽음으로
-        # 기록된 회차라면(예: 완독 처리) 굳이 읽는 중으로 겹쳐 표시하지 않음
-        is_reading = (not is_read) and chapter["id"] == current_chapter_id
+        is_reading = chapter["id"] == current_chapter_id
+        # "지금 보고 있는 회차"라는 정보가 "예전에 읽었는지"보다 더 구체적이고 우선한다 -
+        # 사이드바에서 이미 읽었던 회차로 다시 돌아가서 보면(예: 10화까지 읽다가 2화를
+        # 다시 열어봄), 그 회차는 "읽음" 기록이 있어도 지금 보는 중이라는 게 더 중요한
+        # 정보이므로 "읽는 중"으로 표시해야 한다. 예전에는 "이미 읽음"이 우선이라 다시
+        # 펴봐도 "읽는 중"이 뜰 자리가 없는 문제가 있었다.
+        is_read = (chapter["id"] in read_ids) and not is_reading
         chapters_out.append(
             {
                 "id": chapter["id"],

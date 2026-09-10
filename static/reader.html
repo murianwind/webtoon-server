@@ -897,13 +897,16 @@ function highlightSidebar() {
     row.classList.toggle("active", isCurrent);
 
     const statusEl = row.querySelector(".sidebar-row-status");
+    // "지금 보고 있는 회차"라는 정보가 "예전에 읽었는지"보다 우선한다 - 이미 읽었던
+    // 회차로 다시 돌아가서 보면(예: 10화까지 읽다가 2화를 다시 열어봄), 예전에는
+    // "이미 읽음"이 먼저 이겨버려서 "읽는 중"이 뜰 자리가 없는 문제가 있었다.
     const effectiveRead = (ch && ch.read) || (currentIdx >= 0 && idx < currentIdx);
-    if (effectiveRead) {
-      statusEl.textContent = "읽음";
-      statusEl.className = "sidebar-row-status read";
-    } else if (isCurrent) {
+    if (isCurrent) {
       statusEl.textContent = "읽는 중";
       statusEl.className = "sidebar-row-status reading";
+    } else if (effectiveRead) {
+      statusEl.textContent = "읽음";
+      statusEl.className = "sidebar-row-status read";
     } else {
       statusEl.textContent = "";
       statusEl.className = "sidebar-row-status";
