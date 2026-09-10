@@ -1223,7 +1223,15 @@ async function openProfileEditor(profileId) {
   renderProfileBrowseFilters(browseFilters);
   renderProfileRequests(requests, profileId);
   populateProfileSeriesFilterOptions();
-  document.getElementById("profileAllowedSeriesList").dataset.allowed = JSON.stringify([...allowedIds]);
+  const allowedListContainer = document.getElementById("profileAllowedSeriesList");
+  // renderProfileSeriesChecklist()는 "필터를 바꿔도 체크 상태를 잃지 않도록" 화면에
+  // 남아있는 체크박스를 읽어서 dataset.allowed에 병합하는데, 다른 프로필의 편집
+  // 화면을 열 때 이전 프로필의 체크박스가 아직 DOM에 남아있으면 그 상태가 이번
+  // 프로필로 섞여 들어가 버린다(실제로 이 버그로 프로필 간 허용목록이 서로 새는
+  // 문제가 있었다). 그래서 새로 여는 시점에는 반드시 먼저 비워서, 아래
+  // renderProfileSeriesChecklist()가 병합할 대상이 하나도 없게 한다.
+  allowedListContainer.innerHTML = "";
+  allowedListContainer.dataset.allowed = JSON.stringify([...allowedIds]);
   renderProfileSeriesChecklist();
 
   document.getElementById("profileEditPanel").classList.add("open");
