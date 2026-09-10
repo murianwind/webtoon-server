@@ -15,22 +15,17 @@ from conftest import make_chapter_zip
 def admin_client(library, monkeypatch):
     """PROFILES_ENABLED=true로 띄우고, 이미 로그인까지 마친 admin 클라이언트를 준다.
 
-    비밀번호는 TestClient를 열기(=startup 이벤트가 돌기) 전에 미리 만들어서 평문을
-    붙잡아둔다 - startup에서도 "이미 있으면 안 만듦" 로직이 그대로 동작해서, 여기서
-    미리 만든 비밀번호가 그대로 유지된 채 로그인에 쓸 수 있다(반대 순서로 하면
-    startup이 먼저 만들어버려서 "최초 1회만 평문 공개"라는 설계상 이 값을 다시 알 방법이
-    없어진다 - 실제로 그 순서로 짰다가 이 테스트가 처음에 실패했었다).
+    비밀번호는 서버가 매번 새로 만드는 정책이라, TestClient를 연 뒤(=startup이 이미
+    한 번 만들어놓은 뒤) 한 번 더 호출해서 "지금부터 유효한" 값을 확정해둔다 - 그
+    이후로는 아무도 다시 안 부르므로 이 값 그대로 로그인에 쓸 수 있다.
     """
     import app.main as main_module
 
     monkeypatch.setenv("PROFILES_ENABLED", "true")
     importlib.reload(main_module)
 
-    auth.init_schema()
-    password = auth.ensure_admin_password_exists()
-    assert password is not None
-
     with TestClient(main_module.app) as client:
+        password = auth.ensure_admin_password_exists()
         client.post("/api/auth/login", json={"password": password})
         yield client
 

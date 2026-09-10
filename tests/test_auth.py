@@ -6,21 +6,27 @@ app/auth.py(관리자 비밀번호 + 기억된 기기) 회귀 테스트. db.py�
 from app import auth
 
 
-def test_first_run_generates_a_password_once(library):
+def test_every_call_generates_a_new_password(library):
     """GIVEN 저장된 관리자 비밀번호가 전혀 없을 때"""
     auth.init_schema()
     assert auth.has_admin_password() is False
 
-    """WHEN 최초 확인을 하면"""
-    generated = auth.ensure_admin_password_exists()
+    """WHEN 처음 호출하면"""
+    first = auth.ensure_admin_password_exists()
 
     """THEN 무작위 비밀번호가 하나 만들어져서 반환되고, 저장된 상태가 된다"""
-    assert generated is not None and len(generated) > 8
+    assert first is not None and len(first) > 8
     assert auth.has_admin_password() is True
 
-    """AND 다시 호출해도(재시작 흉내) 새로 만들지 않고 None을 반환한다 - 기존 기기가 안 끊기려면 필수"""
-    again = auth.ensure_admin_password_exists()
-    assert again is None
+    """AND 다시 호출하면(재시작 흉내) 매번 새로운 비밀번호로 교체된다 - 등록된 기기가
+    없는 상태라 안전하고, 기기가 있어도 그 기기는 비밀번호가 아니라 기기 쿠키로
+    통과되므로 여전히 안전하다"""
+    second = auth.ensure_admin_password_exists()
+    assert second is not None and second != first
+
+    """AND 이전 비밀번호로는 더 이상 로그인이 안 되고, 최신 비밀번호로만 된다"""
+    assert auth.verify_admin_password(first, client_key="1.1.1.1") is False
+    assert auth.verify_admin_password(second, client_key="1.1.1.2") is True
 
 
 def test_correct_password_verifies_and_wrong_one_does_not(library):
@@ -36,7 +42,7 @@ def test_correct_password_verifies_and_wrong_one_does_not(library):
 def test_repeated_wrong_attempts_get_locked_out(library):
     """GIVEN 비밀번호가 있을 때"""
     auth.init_schema()
-    auth.ensure_admin_password_exists()
+    password = auth.ensure_admin_password_exists()
 
     """WHEN 같은 클라이언트가 짧은 시간에 틀린 비밀번호를 여러 번 시도하면"""
     client = "9.9.9.9"
@@ -44,11 +50,7 @@ def test_repeated_wrong_attempts_get_locked_out(library):
         auth.verify_admin_password("틀린값", client_key=client)
 
     """THEN 그 이후로는 맞는 비밀번호를 넣어도 잠깐 통과가 안 된다"""
-    correct = None  # 정확한 값을 몰라도 되도록, 다른 사용자로 별도 발급받아 확인
-    with_password = auth.ensure_admin_password_exists()  # 이미 있으므로 None 반환됨
-    assert with_password is None
-    # 위에서 이미 5회 틀렸으므로, 설령 여기서 맞는 비번을 안다 해도 잠금 상태 확인만 검증
-    assert auth.verify_admin_password("아무값", client_key=client) is False
+    assert auth.verify_admin_password(password, client_key=client) is False
 
 
 def test_remembered_device_lifecycle(library):

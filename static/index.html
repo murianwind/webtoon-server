@@ -952,6 +952,7 @@ function positionChapterSidebarList(chapters) {
 
 async function openChapterSidebar(series) {
   chapterSidebarTitle.textContent = series.title;
+  chapterSidebarList.style.display = ""; // 둘러보기 정보 화면에서 숨겨뒀을 수 있으니 복원
   chapterSidebarList.innerHTML = `<div class="picker-loading">불러오는 중...</div>`;
   chapterSidebar.classList.add("open");
   chapterSidebarOverlay.classList.add("open");
@@ -1082,9 +1083,10 @@ let editingProfileId = null;
 
 function openBrowseInfoSidebar(item) {
   // 회차 목록은 시도하지 않는다 - 둘러보기 항목은 아직 허용 전이라 403이 날 것이므로,
-  // "정보" 버튼은 오직 info.xml 내용만 사이드바(스크롤 없이 전체가 보이는 영역)에 보여준다.
+  // 회차 목록 영역 자체를 숨겨서 info.xml 내용만 사이드바 전체에 길게 나오게 한다.
   chapterSidebarTitle.textContent = item.title;
-  chapterSidebarList.innerHTML = `<div class="settings-hint">허용되면 여기서 회차를 볼 수 있어요.</div>`;
+  chapterSidebarList.innerHTML = "";
+  chapterSidebarList.style.display = "none";
   chapterSidebar.classList.add("open");
   chapterSidebarOverlay.classList.add("open");
   renderSeriesInfoPanel(item.id);

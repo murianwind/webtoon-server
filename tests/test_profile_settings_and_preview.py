@@ -30,8 +30,6 @@ def two_profiles_and_admin(library, monkeypatch):
     )
 
     auth.init_schema()
-    password = auth.ensure_admin_password_exists()
-    assert password is not None
 
     profiles.init_schema()
     profile_a = profiles.create_profile("A")
@@ -39,6 +37,9 @@ def two_profiles_and_admin(library, monkeypatch):
     profiles.set_browse_filters(profile_a["id"], [("kakao", "전체 이용가")])
 
     with TestClient(main_module.app) as admin_client:
+        # TestClient(=startup 이벤트)를 연 뒤 한 번 더 호출해서 "지금부터 유효한"
+        # 비밀번호를 확정해둔다(서버가 매번 새로 만드는 정책이라 반드시 이 순서여야 함).
+        password = auth.ensure_admin_password_exists()
         admin_client.post("/api/auth/login", json={"password": password})
         admin_client.post("/api/rescan")
         series_id = admin_client.get("/api/series").json()[0]["id"]

@@ -79,21 +79,24 @@ def has_admin_password() -> bool:
     return row is not None
 
 
-def ensure_admin_password_exists() -> str | None:
+def ensure_admin_password_exists() -> str:
     """
-    저장된 관리자 비밀번호가 없으면(최초 실행) 무작위로 하나 만들어서 저장하고, 그
-    평문 비밀번호를 반환한다(호출한 쪽이 로그/디스코드로 안내하도록). 이미 있으면
-    아무것도 안 하고 None을 반환한다 - 재시작할 때마다 새로 만들면 이미 등록된
-    기기들이 전부 다시 비밀번호를 물어보게 되므로, 반드시 "없을 때만" 만들어야 한다.
+    서버가 시작될 때마다 호출된다. 항상 새 비밀번호를 만들어서 반환한다(호출한 쪽이
+    로그/디스코드로 안내하도록) - 이미 로그인해서 기기로 등록된 사람은 전혀 영향이
+    없다. 그 사람들은 비밀번호를 다시 확인받는 게 아니라 "기억된 기기" 쿠키로만
+    통과되므로(profile_and_admin_gate 참고), 비밀번호 자체는 그 이후로 아무 의미가
+    없어진 상태다. 즉 이 비밀번호는 "그 순간 새로 접속하려는 기기를 등록할 때만"
+    필요한 일회성 열쇠에 가까워서, 재시작마다 바뀌어도 기존 기기는 안전하다.
     """
-    if has_admin_password():
-        return None
     raw_password = secrets.token_urlsafe(9)  # 사람이 옮겨 적기 부담없는 길이의 무작위 비밀번호
     salt = secrets.token_bytes(16)
     hashed = _hash_password(raw_password, salt)
     with db.db_connection() as conn:
         conn.execute(
-            "INSERT INTO admin_auth (key, value) VALUES (?, ?)",
+            """
+            INSERT INTO admin_auth (key, value) VALUES (?, ?)
+            ON CONFLICT (key) DO UPDATE SET value = excluded.value
+            """,
             (_PASSWORD_HASH_KEY, hashed),
         )
         conn.commit()

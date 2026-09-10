@@ -27,15 +27,12 @@ def profile_setup(library, monkeypatch):
     profiles.init_schema()
     created = profiles.create_profile("딸")
 
-    # TestClient(=startup 이벤트)를 열기 전에 미리 비밀번호를 만들어서 평문을 붙잡아둔다
-    # (startup이 먼저 만들면 "최초 1회만 평문 공개" 설계상 다시 알아낼 방법이 없어진다).
+    # TestClient(=startup 이벤트)를 연 뒤 한 번 더 호출해서 "지금부터 유효한" 비밀번호를
+    # 확정해둔다(서버가 매번 새로 만드는 정책이라, 그 이후로는 아무도 다시 안 불러야 함).
     from app import auth as auth_module
 
-    auth_module.init_schema()
-    password = auth_module.ensure_admin_password_exists()
-    assert password is not None
-
     with TestClient(main_module.app) as client:
+        password = auth_module.ensure_admin_password_exists()
         client.post("/api/auth/login", json={"password": password})
         client.post("/api/rescan")
         all_series = client.get("/api/series").json()

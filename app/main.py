@@ -163,15 +163,16 @@ async def startup_scan():
         profile_progress.init_schema()
         profile_settings.init_schema()
 
-        # 저장된 비밀번호가 없을 때만(최초 실행) 새로 만든다 - 매번 만들면 이미 등록된
-        # 기기들이 전부 다시 로그인하게 되므로 반드시 "없을 때만"이어야 한다.
-        generated_password = auth.ensure_admin_password_exists()
-        if generated_password:
-            log.warning(f"[최초 실행] 관리자 비밀번호가 생성되었습니다: {generated_password}")
-            log.warning("이 비밀번호는 다시 보여주지 않으니 지금 저장해두세요. (재설정: README 참고)")
-            asyncio.create_task(
-                discord_notify.send(f"🔑 webtoon-server 관리자 비밀번호가 생성되었습니다: `{generated_password}`")
-            )
+        # 서버가 켜질 때마다 새 비밀번호를 만들어서 로그(+디스코드)에 남긴다. 이미
+        # 로그인해서 기억된 기기는 비밀번호가 아니라 기기 쿠키로만 통과되므로(위
+        # ensure_admin_password_exists 설명 참고) 전혀 영향이 없다 - 이 값은 "지금부터
+        # 새로 로그인하려는 기기"가 써야 하는 값이다.
+        new_password = auth.ensure_admin_password_exists()
+        log.warning(f"관리자 비밀번호(새로 접속하는 기기용): {new_password}")
+        log.warning("이미 로그인해서 기억된 기기는 이 값과 무관하게 계속 그대로 접속됩니다.")
+        asyncio.create_task(
+            discord_notify.send(f"🔑 webtoon-server 관리자 비밀번호(새로 접속하는 기기용): `{new_password}`")
+        )
 
 
 # ---------------------------------------------------------------------------

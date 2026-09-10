@@ -66,12 +66,12 @@ def test_login_with_wrong_password_fails_and_stays_blocked(enabled_client):
 
 
 def test_login_success_sets_cookie_and_unlocks_access(enabled_app):
-    """GIVEN 비밀번호를 미리 알고 있는 상태일 때(직접 생성해서 확인)"""
-    auth.init_schema()
-    password = auth.ensure_admin_password_exists()
-    assert password is not None
-
+    """GIVEN TestClient를 연 뒤(=startup이 이미 한 번 만들어놓은 상태) 최신 비밀번호를 다시 확정해두면"""
     with TestClient(enabled_app) as client:
+        # startup이 이미 한 번 만들어놨지만, 매번 새로 만드는 정책이라 여기서 한 번 더
+        # 호출해서 "지금부터 유효한" 값을 확정해둔다(이후로는 아무도 다시 안 부르므로 안전).
+        password = auth.ensure_admin_password_exists()
+
         """WHEN 로그인 전엔 API가 막혀있고"""
         assert client.get("/api/series").status_code == 401
 
@@ -85,10 +85,8 @@ def test_login_success_sets_cookie_and_unlocks_access(enabled_app):
 
 def test_remembered_device_can_be_revoked_from_device_list(enabled_app):
     """GIVEN 로그인해서 기기가 기억된 상태일 때"""
-    auth.init_schema()
-    password = auth.ensure_admin_password_exists()
-
     with TestClient(enabled_app) as client:
+        password = auth.ensure_admin_password_exists()
         client.post("/api/auth/login", json={"password": password})
         assert client.get("/api/series").status_code == 200
 
