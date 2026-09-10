@@ -185,9 +185,11 @@ app.include_router(backup.router)
 
 if PROFILES_ENABLED:
     from .routers import auth as auth_router
+    from .routers import browse as browse_router
     from .routers import profiles as profiles_router
 
     app.include_router(auth_router.router)
+    app.include_router(browse_router.router)
     app.include_router(profiles_router.router)
 
 

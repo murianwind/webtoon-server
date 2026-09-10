@@ -20,6 +20,25 @@ def get_chapters_map() -> dict:
     return _state["chapters"]
 
 
+def get_platform_age_ratings() -> dict[str, set[str]]:
+    """
+    지금 스캔되어 있는 시리즈들을 훑어서, 플랫폼별로 실제 등장하는 연령등급 값 집합을
+    모아 반환한다. (공유 프로필의 "둘러보기 연령 필터" 화면에서, 실제 라이브러리에
+    어떤 값들이 있는지 보여주는 용도 - DB에 따로 저장하지 않고 스캔 결과에서 매번
+    바로 뽑아서 항상 최신 상태를 반영한다.)
+
+    연령등급 정보가 없는 시리즈(info.xml이 없거나 그 필드가 빈 경우)는 None으로 묶어서
+    포함한다 - 호출하는 쪽에서 "정보 없음"으로 표시할 수 있게.
+    """
+    result: dict[str, set[str]] = {}
+    for series in _state["series"].values():
+        platform = series["platform"]
+        info = series.get("info") or {}
+        age_rating = info.get("age_rating") or None
+        result.setdefault(platform, set()).add(age_rating)
+    return result
+
+
 def get_series(series_id: str) -> dict | None:
     return _state["series"].get(series_id)
 
