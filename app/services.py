@@ -148,9 +148,11 @@ async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
                 completed = True  # 이 플랫폼은 끝까지 다 훑었음(중단이 아니라)
                 break
             series_ref, series_entry, chapters_map = item
-            seen_refs.append(series_ref)  # 제외된 폴더도 "발견됨" 자체는 계속 기록(설정 패널용)
+            seen_refs.append(series_ref)  # 발견된 폴더 전부 기록(설정 패널의 폴더 목록용)
             catalog.set_platform_folder_refs(platform, list(seen_refs))
-            if series_entry:  # 제외되지 않아서 실제로 스캔된 경우만 카탈로그에 반영
+            if series_entry:  # 실제로 스캔에 성공한 경우만 카탈로그에 반영(제외된 폴더도 포함됨 -
+                # "제외"는 이제 스캔 자체를 막는 게 아니라 excluded 플래그만 남기고, 관리자
+                # 메인 목록(list_series)에서 그 플래그를 보고 걸러내는 방식으로 바뀌었다)
                 catalog.add_series(series_entry, chapters_map)
                 seen_ids.add(series_entry["id"])
 

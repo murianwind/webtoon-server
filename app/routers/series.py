@@ -26,6 +26,11 @@ def list_series(request: Request):
 
     result = []
     for series in catalog.get_series_map().values():
+        # "제외"는 관리자 메인 화면에서만 숨기는 것이다 - 프로필에게 이미 허용된
+        # 시리즈라면, 관리자가 자기 목록에서 안 보이게 해뒀어도 그 프로필한테는
+        # 그대로 보여야 한다(전체 라이브러리 중 아무거나 공유할 수 있어야 하므로).
+        if profile is None and series.get("excluded"):
+            continue
         if allowed_ids is not None and series["id"] not in allowed_ids:
             continue
 

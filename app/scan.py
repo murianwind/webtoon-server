@@ -259,7 +259,12 @@ def scan_single_series(platform: str, series_ref: str) -> tuple[dict, dict] | No
     series_path = _resolve_safe_series_path(platform, series_ref)
     if series_path is None or not os.path.isdir(series_path):
         return None
-    return _scan_series_at_path(platform, series_ref, series_path)
+    result = _scan_series_at_path(platform, series_ref, series_path)
+    if result:
+        series_entry, chapters_map = result
+        series_entry["excluded"] = False  # 이 함수는 "방금 제외를 풀었을 때"만 쓰이므로
+        return series_entry, chapters_map
+    return None
 
 
 def iter_platform_series_streaming(platform: str):
@@ -270,10 +275,11 @@ def iter_platform_series_streaming(platform: str):
     "발견 하나당 스캔 하나"라서, 네트워크 드라이브에 폴더가 아주 많아도 첫 번째 결과가
     나오기까지 전체 탐색이 끝나길 기다릴 필요가 없다.
 
-    제외된 (platform, series_ref) 조합은 실제 내용(zip 목록 등)은 절대 열어보지 않지만,
-    "이런 폴더가 있다"는 것 자체는 여전히 알려줘야 설정 패널의 "제외된 폴더" 목록에서
-    다시 포함시킬 수 있다 - 그래서 series_entry/chapters_map을 None으로 해서 yield한다
-    (호출하는 쪽에서 series_entry가 None이면 "발견은 했지만 스캔은 안 함"으로 처리할 것).
+    제외된 (platform, series_ref) 조합도 다른 시리즈와 똑같이 실제 내용까지 전부
+    스캔한다 - "제외"는 관리자 메인 화면 목록에서만 숨기는 것이지, 데이터 자체를
+    없애는 게 아니다(공유 프로필에는 여전히 선택 후보로 줄 수 있어야 하므로). 대신
+    series_entry에 "excluded" 플래그를 남겨서, 그 판단(숨길지 말지)은 이 결과를
+    쓰는 쪽(관리자 메인 목록 API)이 하도록 넘긴다.
     """
     platform_path = os.path.join(LIBRARY_ROOT, platform)
     if not os.path.isdir(platform_path):
@@ -286,12 +292,10 @@ def iter_platform_series_streaming(platform: str):
             continue
         dirnames.clear()  # 시리즈 폴더로 인식된 곳 안쪽은 더 내려가지 않음(중복/오인 방지)
         series_ref = os.path.relpath(dirpath, platform_path).replace(os.sep, "/")
-        if (platform, series_ref) in excluded:
-            yield series_ref, None, None
-            continue
         result = _scan_series_at_path(platform, series_ref, dirpath)
         if result:
             series_entry, chapters_map = result
+            series_entry["excluded"] = (platform, series_ref) in excluded
             yield series_ref, series_entry, chapters_map
         else:
             yield series_ref, None, None

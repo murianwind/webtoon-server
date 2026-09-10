@@ -65,14 +65,20 @@ class SeriesFolderRef(BaseModel):
 
 @router.post("/api/series-folders/exclude")
 def exclude_series_folder(body: SeriesFolderRef):
-    """제외는 이미 스캔되어 카탈로그에 있는 시리즈를 메모리에서 바로 빼는 것뿐이라,
-    디스크를 다시 훑을 필요가 없다 - 그래서 즉시 반영된다."""
+    """
+    제외해도 카탈로그에서 시리즈 데이터를 지우지는 않는다 - "제외"는 관리자 메인
+    화면(list_series)에서만 숨기는 것이고, 이미 스캔된 실제 데이터(회차/커버/정보)는
+    그대로 남아있어야 공유 프로필에게 계속 선택 후보로 줄 수 있다. 그래서 카탈로그의
+    해당 엔트리에 excluded 플래그만 세워서, 다음 재스캔 전까지도 즉시 반영되게 한다.
+    """
     excluded = db.get_excluded_series()
     excluded.add((body.platform, body.series))
     db.set_excluded_series(excluded)
     series_id = scan.make_id(body.platform, body.series)
-    catalog.remove_series(series_id)
-    log.info(f"시리즈 폴더 스캔 제외: {body.platform}/{body.series} (파일은 삭제하지 않음)")
+    series = catalog.get_series(series_id)
+    if series:
+        series["excluded"] = True
+    log.info(f"시리즈 폴더 스캔 제외(관리자 메인 화면에서만 숨김, 프로필 공유는 계속 가능): {body.platform}/{body.series}")
     return {"ok": True}
 
 
