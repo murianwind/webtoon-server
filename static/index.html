@@ -646,23 +646,33 @@ function showProfileTab(name, skipSave) {
   }
 }
 
+let lastBrowseItems = []; // 검색어가 바뀔 때마다 API를 다시 부르지 않고 이 목록을 재필터링
+
 async function fetchAndRenderBrowse() {
   const grid = document.getElementById("browseGrid");
   grid.innerHTML = `<div class="empty-state">불러오는 중...</div>`;
   try {
     const res = await fetch("/api/browse");
     if (!res.ok) throw new Error("browse fetch failed");
-    const items = await res.json();
-    renderBrowseGrid(items);
+    lastBrowseItems = await res.json();
+    renderBrowseGrid(filterBrowseItems(lastBrowseItems));
   } catch (e) {
     grid.innerHTML = `<div class="empty-state">불러오지 못했습니다.</div>`;
   }
 }
 
+function filterBrowseItems(items) {
+  if (!query) return items;
+  const q = query.toLowerCase();
+  return items.filter((item) => item.title.toLowerCase().includes(q));
+}
+
 function renderBrowseGrid(items) {
   const grid = document.getElementById("browseGrid");
   if (!items.length) {
-    grid.innerHTML = `<div class="empty-state">둘러볼 수 있는 웹툰이 없습니다.</div>`;
+    grid.innerHTML = query
+      ? `<div class="empty-state">검색 결과가 없습니다.</div>`
+      : `<div class="empty-state">둘러볼 수 있는 웹툰이 없습니다.</div>`;
     return;
   }
   grid.innerHTML = "";
@@ -712,6 +722,10 @@ searchInput.addEventListener("input", (e) => {
   query = e.target.value;
   localStorage.setItem(LS_QUERY, query);
   render();
+  const browseGrid = document.getElementById("browseGrid");
+  if (browseGrid.style.display !== "none") {
+    renderBrowseGrid(filterBrowseItems(lastBrowseItems));
+  }
 });
 sortSelect.addEventListener("change", (e) => {
   sortMode = e.target.value;
