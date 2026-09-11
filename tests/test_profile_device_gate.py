@@ -122,6 +122,56 @@ def test_admin_access_is_never_gated_by_profile_device_limit(profile_setup):
     assert admin_client.get("/api/series").status_code == 200
 
 
+def test_admin_can_reject_a_device_request(profile_setup):
+    """GIVEN 이미 기기 2대가 있고, 3번째가 신청까지 한 상태일 때"""
+    token = profile_setup["token"]
+    profile_id = profile_setup["profile_id"]
+    admin_client = profile_setup["admin_client"]
+
+    TestClient(profile_setup["app"]).get(f"/p/{token}/api/series")
+    TestClient(profile_setup["app"]).get(f"/p/{token}/api/series")
+    device3 = TestClient(profile_setup["app"])
+    device3.get(f"/p/{token}/")
+    device3.post(f"/p/{token}/api/device/request")
+    device_id = devices.list_pending_requests(profile_id)[0]["device_id"]
+
+    """WHEN 관리자가 거부하면"""
+    r = admin_client.post(f"/api/admin/profiles/{profile_id}/device-requests/{device_id}/reject")
+    assert r.status_code == 200
+
+    """THEN 그 기기는 "거부됨" 상태가 되고, 여전히 실제 콘텐츠는 접근 못 한다"""
+    status = device3.get(f"/p/{token}/api/device/status").json()
+    assert status["status"] == "rejected"
+    assert device3.get(f"/p/{token}/api/series").status_code == 403
+
+    """AND 다시 신청을 눌러도 거부 상태가 그대로 유지된다(반복 알림 방지)"""
+    device3.post(f"/p/{token}/api/device/request")
+    status2 = device3.get(f"/p/{token}/api/device/status").json()
+    assert status2["status"] == "rejected"
+
+
+def test_admin_can_still_approve_after_rejecting(profile_setup):
+    """GIVEN 거부된 기기 요청이 있을 때"""
+    token = profile_setup["token"]
+    profile_id = profile_setup["profile_id"]
+    admin_client = profile_setup["admin_client"]
+
+    TestClient(profile_setup["app"]).get(f"/p/{token}/api/series")
+    TestClient(profile_setup["app"]).get(f"/p/{token}/api/series")
+    device3 = TestClient(profile_setup["app"])
+    device3.get(f"/p/{token}/")
+    device3.post(f"/p/{token}/api/device/request")
+    device_id = devices.list_pending_requests(profile_id)[0]["device_id"]
+    admin_client.post(f"/api/admin/profiles/{profile_id}/device-requests/{device_id}/reject")
+
+    """WHEN 관리자가 마음을 바꿔 승인하면"""
+    r = admin_client.post(f"/api/admin/profiles/{profile_id}/device-requests/{device_id}/approve")
+    assert r.status_code == 200
+
+    """THEN 거부 상태였어도 정상적으로 승인되어 접속할 수 있다"""
+    assert device3.get(f"/p/{token}/api/series").status_code == 200
+
+
 def test_gated_page_responses_are_never_cached(profile_setup):
     """GIVEN 기기 게이트를 거치는 페이지 응답일 때(대기 화면이든 실제 화면이든)"""
     token = profile_setup["token"]

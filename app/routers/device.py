@@ -22,9 +22,7 @@ def device_status(request: Request):
 
     if profile_devices.is_device_registered(profile["id"], device_id):
         return {"status": "approved"}
-    if profile_devices.get_pending_request(profile["id"], device_id):
-        return {"status": "pending"}
-    return {"status": "needs_request"}
+    return {"status": profile_devices.get_request_status(profile["id"], device_id) or "needs_request"}
 
 
 @router.post("/api/device/request")

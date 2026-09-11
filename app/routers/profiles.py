@@ -223,3 +223,13 @@ def approve_device_request(profile_id: str, device_id: str):
         raise HTTPException(404, "profile not found")
     profile_devices.approve_request(profile_id, device_id)
     return {"ok": True}
+
+
+@router.post("/api/admin/profiles/{profile_id}/device-requests/{device_id}/reject")
+def reject_device_request(profile_id: str, device_id: str):
+    """그 기기는 이제 신청 화면에서도 "거부됨" 상태로 표시되고, 다시 요청을 눌러도
+    바로 거부됨으로 처리된다(관리자가 승인하면 언제든 뒤집을 수 있음)."""
+    if profiles.get_profile(profile_id) is None:
+        raise HTTPException(404, "profile not found")
+    profile_devices.reject_request(profile_id, device_id)
+    return {"ok": True}

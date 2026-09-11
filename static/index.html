@@ -1398,10 +1398,15 @@ function renderProfileDeviceRequests(deviceRequests, profileId) {
     const requestedAt = new Date(req.requested_at).toLocaleString("ko-KR");
     row.innerHTML = `
       <span class="lib-name">${simplifyDeviceLabel(req.label)} <span class="profile-allowed-count">요청: ${requestedAt}</span></span>
-      <button class="lib-action-btn add">승인</button>
+      <button class="lib-action-btn add" data-action="approve">승인</button>
+      <button class="lib-action-btn" data-action="reject">거부</button>
     `;
-    row.querySelector(".lib-action-btn").addEventListener("click", async () => {
+    row.querySelector('[data-action="approve"]').addEventListener("click", async () => {
       await fetch(`/api/admin/profiles/${profileId}/device-requests/${req.device_id}/approve`, { method: "POST" });
+      openProfileEditor(profileId);
+    });
+    row.querySelector('[data-action="reject"]').addEventListener("click", async () => {
+      await fetch(`/api/admin/profiles/${profileId}/device-requests/${req.device_id}/reject`, { method: "POST" });
       openProfileEditor(profileId);
     });
     container.appendChild(row);

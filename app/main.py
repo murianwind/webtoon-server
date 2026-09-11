@@ -147,8 +147,7 @@ async def profile_and_admin_gate(request, call_next):
             label = request.headers.get("user-agent", "알 수 없는 기기")[:120]
             profile_devices.register_device(profile["id"], device_id, label)
         else:
-            pending = profile_devices.get_pending_request(profile["id"], device_id)
-            device_status = "pending" if pending else "needs_request"
+            device_status = profile_devices.get_request_status(profile["id"], device_id) or "needs_request"
 
         if device_status != "approved" and rest not in ("/api/device/status", "/api/device/request"):
             if rest.startswith("/api/"):

@@ -20,6 +20,9 @@ MAX_DEVICES_PER_PROFILE = 2
 PROFILE_DEVICE_COOKIE_NAME = "webtoon_profile_device"
 PROFILE_DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 접속마다 이 값으로 다시 연장(롤링)
 
+STATUS_PENDING = "pending"
+STATUS_REJECTED = "rejected"
+
 
 def init_schema() -> None:
     os.makedirs(os.path.dirname(db.DB_PATH), exist_ok=True)
@@ -43,11 +46,18 @@ def init_schema() -> None:
                 profile_id TEXT NOT NULL,
                 device_id TEXT NOT NULL,
                 label TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
                 requested_at TEXT NOT NULL,
                 PRIMARY KEY (profile_id, device_id)
             )
             """
         )
+        # 이 기능이 나중에(거부 버튼과 함께) 추가되어, status 컬럼 없이 이미 만들어진
+        # 테이블이 있을 수 있다 - 없으면 추가하고, 이미 있으면 에러가 나므로 조용히 무시.
+        try:
+            conn.execute("ALTER TABLE profile_device_requests ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -116,8 +126,9 @@ def _remove_oldest_device(profile_id: str) -> None:
 
 
 def create_pending_request(profile_id: str, device_id: str, label: str) -> None:
-    """이미 같은 (프로필, 기기) 대기 요청이 있으면 그대로 두고 새로 안 만든다 - 요청
-    화면을 닫았다가 같은 기기로 다시 들어와도 중복 요청이 쌓이지 않게."""
+    """이미 같은 (프로필, 기기) 요청이 있으면(대기중이든 거부든) 그대로 두고 새로 안
+    만든다 - 요청 화면을 닫았다가 같은 기기로 다시 들어와도 중복 요청이 안 쌓이고,
+    거부된 걸 다시 요청해서 관리자한테 알림이 반복되는 것도 막는다."""
     with db.db_connection() as conn:
         existing = conn.execute(
             "SELECT 1 FROM profile_device_requests WHERE profile_id = ? AND device_id = ?",
@@ -126,13 +137,27 @@ def create_pending_request(profile_id: str, device_id: str, label: str) -> None:
         if existing:
             return
         conn.execute(
-            "INSERT INTO profile_device_requests (profile_id, device_id, label, requested_at) VALUES (?, ?, ?, ?)",
-            (profile_id, device_id, label, datetime.utcnow().isoformat()),
+            "INSERT INTO profile_device_requests (profile_id, device_id, label, status, requested_at) VALUES (?, ?, ?, ?, ?)",
+            (profile_id, device_id, label, STATUS_PENDING, datetime.utcnow().isoformat()),
         )
         conn.commit()
 
 
+def get_request_status(profile_id: str, device_id: str | None) -> str | None:
+    """"pending" | "rejected" | None(요청 자체가 없음)."""
+    if not device_id:
+        return None
+    with db.db_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM profile_device_requests WHERE profile_id = ? AND device_id = ?",
+            (profile_id, device_id),
+        ).fetchone()
+    return row[0] if row else None
+
+
 def get_pending_request(profile_id: str, device_id: str | None) -> dict | None:
+    """상태(대기/거부)와 무관하게 요청 레코드 자체를 가져온다 - approve_request가
+    label을 알아내는 데 쓴다(거부된 요청이라도 관리자가 뒤늦게 승인할 수 있어야 함)."""
     if not device_id:
         return None
     with db.db_connection() as conn:
@@ -144,24 +169,44 @@ def get_pending_request(profile_id: str, device_id: str | None) -> dict | None:
 
 
 def list_pending_requests(profile_id: str) -> list[dict]:
+    """관리자 화면에 보여줄 목록 - 이미 거부 처리된 건 더 이상 "대기중"이 아니므로 뺀다."""
     with db.db_connection() as conn:
         rows = conn.execute(
-            "SELECT device_id, label, requested_at FROM profile_device_requests WHERE profile_id = ? "
+            "SELECT device_id, label, requested_at FROM profile_device_requests WHERE profile_id = ? AND status = ? "
             "ORDER BY requested_at ASC",
-            (profile_id,),
+            (profile_id, STATUS_PENDING),
         ).fetchall()
     return [{"device_id": r[0], "label": r[1], "requested_at": r[2]} for r in rows]
 
 
+def reject_request(profile_id: str, device_id: str) -> None:
+    """대기중인 요청을 거부 상태로 바꾼다. 요청 자체가 아직 없었어도(관리자가 먼저
+    선제적으로 막고 싶은 경우) 거부 상태를 만들어서, 그 기기가 다시 신청 버튼을
+    눌러도 곧바로 거부됨으로 처리되게 한다."""
+    with db.db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO profile_device_requests (profile_id, device_id, label, status, requested_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT (profile_id, device_id) DO UPDATE SET status = excluded.status
+            """,
+            (profile_id, device_id, "", STATUS_REJECTED, datetime.utcnow().isoformat()),
+        )
+        conn.commit()
+
+
 def approve_request(profile_id: str, device_id: str) -> None:
     """이미 2대가 등록되어 있으면 가장 오래(안 쓴) 기기를 먼저 지우고, 새 기기를
-    등록한 뒤 대기 요청을 정리한다."""
+    등록한 뒤 요청 레코드를 정리한다. 거부됐던 요청이라도 관리자가 뒤늦게 승인하면
+    그대로 등록된다(거부는 되돌릴 수 없는 최종 상태가 아니라, 승인이 그 자체로
+    번복 수단이 된다)."""
     pending = get_pending_request(profile_id, device_id)
     if pending is None:
         return
+    label = pending["label"] or "알 수 없는 기기"
     if count_devices(profile_id) >= MAX_DEVICES_PER_PROFILE:
         _remove_oldest_device(profile_id)
-    register_device(profile_id, device_id, pending["label"])
+    register_device(profile_id, device_id, label)
     with db.db_connection() as conn:
         conn.execute(
             "DELETE FROM profile_device_requests WHERE profile_id = ? AND device_id = ?", (profile_id, device_id)
