@@ -120,6 +120,10 @@
       <div id="profileRequestsList" class="lib-list"></div>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">기기 승인 요청 (최대 2대)</div>
+      <div id="profileDeviceRequestsList" class="lib-list"></div>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">허용 시리즈</div>
       <div class="profile-series-filter-row">
         <select id="profileSeriesPlatformFilter"></select>
@@ -1191,8 +1195,11 @@ async function refreshProfilesList() {
     const badge = profile.pending_request_count > 0
       ? `<span class="profile-pending-badge">요청 ${profile.pending_request_count}</span>`
       : "";
+    const deviceBadge = profile.pending_device_request_count > 0
+      ? `<span class="profile-pending-badge device">기기 ${profile.pending_device_request_count}</span>`
+      : "";
     row.innerHTML = `
-      <span class="lib-name">${profile.name}${badge} <span class="profile-allowed-count">허용 ${profile.allowed_count}개</span></span>
+      <span class="lib-name">${profile.name}${badge}${deviceBadge} <span class="profile-allowed-count">허용 ${profile.allowed_count}개</span></span>
       <button class="lib-action-btn">편집</button>
     `;
     row.querySelector(".lib-action-btn").addEventListener("click", () => openProfileEditor(profile.id));
@@ -1216,12 +1223,13 @@ async function createNewProfile() {
 
 async function openProfileEditor(profileId) {
   editingProfileId = profileId;
-  const [profilesRes, filtersRes, allowedRes, requestsRes, timeWindowsRes] = await Promise.all([
+  const [profilesRes, filtersRes, allowedRes, requestsRes, timeWindowsRes, deviceRequestsRes] = await Promise.all([
     fetch("/api/admin/profiles"),
     fetch(`/api/admin/profiles/${profileId}/browse-filters`),
     fetch(`/api/admin/profiles/${profileId}/allowed-series`),
     fetch(`/api/admin/profiles/${profileId}/requests`),
     fetch(`/api/admin/profiles/${profileId}/time-windows`),
+    fetch(`/api/admin/profiles/${profileId}/device-requests`),
   ]);
   const profilesList = await profilesRes.json();
   const profile = profilesList.find((p) => p.id === profileId);
@@ -1229,6 +1237,7 @@ async function openProfileEditor(profileId) {
   const allowedIds = new Set(await allowedRes.json());
   const requests = await requestsRes.json();
   const timeWindows = await timeWindowsRes.json();
+  const deviceRequests = await deviceRequestsRes.json();
 
   // 매번 새로 불러온다(캐시 안 함) - 원드라이브처럼 느린 플랫폼은 스캔이 늦게 끝나니,
   // 관리자가 이 화면을 스캔 완료 전에 한 번이라도 열면 그 시점의 불완전한 목록이
@@ -1243,6 +1252,7 @@ async function openProfileEditor(profileId) {
   renderProfileBrowseFilters(browseFilters);
   renderProfileTimeWindows(timeWindows);
   renderProfileRequests(requests, profileId);
+  renderProfileDeviceRequests(deviceRequests, profileId);
   populateProfileSeriesFilterOptions();
   const allowedListContainer = document.getElementById("profileAllowedSeriesList");
   // renderProfileSeriesChecklist()는 "필터를 바꿔도 체크 상태를 잃지 않도록" 화면에
@@ -1369,6 +1379,29 @@ function renderProfileRequests(requests, profileId) {
     });
     row.querySelector('[data-action="reject"]').addEventListener("click", async () => {
       await fetch(`/api/admin/profiles/${profileId}/requests/${req.series_id}/reject`, { method: "POST" });
+      openProfileEditor(profileId);
+    });
+    container.appendChild(row);
+  }
+}
+
+function renderProfileDeviceRequests(deviceRequests, profileId) {
+  const container = document.getElementById("profileDeviceRequestsList");
+  if (!deviceRequests.length) {
+    container.innerHTML = `<div class="settings-hint">대기중인 기기 승인 요청이 없습니다.</div>`;
+    return;
+  }
+  container.innerHTML = "";
+  for (const req of deviceRequests) {
+    const row = document.createElement("div");
+    row.className = "lib-row";
+    const requestedAt = new Date(req.requested_at).toLocaleString("ko-KR");
+    row.innerHTML = `
+      <span class="lib-name">${simplifyDeviceLabel(req.label)} <span class="profile-allowed-count">요청: ${requestedAt}</span></span>
+      <button class="lib-action-btn add">승인</button>
+    `;
+    row.querySelector(".lib-action-btn").addEventListener("click", async () => {
+      await fetch(`/api/admin/profiles/${profileId}/device-requests/${req.device_id}/approve`, { method: "POST" });
       openProfileEditor(profileId);
     });
     container.appendChild(row);

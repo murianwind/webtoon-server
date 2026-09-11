@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>기기 승인 필요 - 내 웹툰</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .device-box { width: 300px; text-align: center; }
+  .device-box h1 { font-size: 17px; margin-bottom: 10px; }
+  .device-box p { font-size: 13px; color: var(--text-dim); line-height: 1.5; margin-bottom: 20px; }
+  .device-box button {
+    width: 100%; background: var(--accent); color: #0a2318; border: none; border-radius: 8px;
+    padding: 10px; font-size: 14px; cursor: pointer;
+  }
+  .device-box button:disabled { background: var(--border); color: var(--text-dim); cursor: default; }
+  .device-spinner {
+    width: 22px; height: 22px; border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; margin: 0 auto 16px; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="device-box" id="deviceBox">불러오는 중...</div>
+
+<script>
+const PROFILE_TOKEN = (() => {
+  const match = location.pathname.match(/^\/p\/([^/]+)/);
+  return match ? match[1] : null;
+})();
+
+function apiUrl(path) {
+  return PROFILE_TOKEN ? `/p/${PROFILE_TOKEN}${path}` : path;
+}
+
+const box = document.getElementById("deviceBox");
+let pollTimer = null;
+
+function renderNeedsRequest() {
+  box.innerHTML = `
+    <h1>기기 승인이 필요해요</h1>
+    <p>이 프로필은 최대 2대까지만 접속할 수 있어요. 이미 2대가 쓰고 있어서, 이 기기를 새로 쓰려면 관리자 승인이 필요해요.</p>
+    <button id="requestBtn">승인 요청하기</button>
+  `;
+  document.getElementById("requestBtn").addEventListener("click", async (e) => {
+    e.target.disabled = true;
+    e.target.textContent = "요청 중...";
+    try {
+      await fetch(apiUrl("/api/device/request"), { method: "POST" });
+      renderPending();
+    } catch (err) {
+      e.target.disabled = false;
+      e.target.textContent = "승인 요청하기";
+    }
+  });
+}
+
+function renderPending() {
+  box.innerHTML = `
+    <div class="device-spinner"></div>
+    <h1>관리자 승인을 기다리는 중이에요</h1>
+    <p>승인되면 자동으로 넘어가요. 이 화면을 그대로 열어두셔도 되고, 나중에 다시 들어와도 이어서 대기 상태예요.</p>
+  `;
+  startPolling();
+}
+
+function startPolling() {
+  if (pollTimer) return;
+  pollTimer = setInterval(checkStatus, 4000);
+}
+
+async function checkStatus() {
+  try {
+    const res = await fetch(apiUrl("/api/device/status"));
+    const data = await res.json();
+    if (data.status === "approved") {
+      clearInterval(pollTimer);
+      location.reload();
+    } else if (data.status === "pending") {
+      renderPending();
+    } else {
+      renderNeedsRequest();
+    }
+  } catch (e) {
+    // 다음 폴링에서 다시 시도
+  }
+}
+
+checkStatus();
+</script>
+</body>
+</html>

@@ -31,9 +31,10 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, services
@@ -43,6 +44,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 log = logging.getLogger("webtoon-server")
 
 PROFILES_ENABLED = os.environ.get("PROFILES_ENABLED", "").lower() == "true"
+STATIC_DIR = os.environ.get("STATIC_DIR", "/app/static")  # 미들웨어에서도 device-approval.html을 직접
+# 서빙해야 해서(기기 승인 대기 화면), 파일 맨 아래 정적 마운트보다 위로 옮겨서 정의한다.
 
 app = FastAPI(title="webtoon-server")
 
@@ -115,7 +118,7 @@ async def profile_and_admin_gate(request, call_next):
         request.state.profile = None
         return await call_next(request)
 
-    from . import auth, profiles  # 지연 import: 기능이 꺼져있을 때 불필요한 로드를 피함
+    from . import auth, profile_devices, profiles  # 지연 import: 기능이 꺼져있을 때 불필요한 로드를 피함
 
     path = request.scope["path"]
 
@@ -126,8 +129,50 @@ async def profile_and_admin_gate(request, call_next):
         if profile is None:
             return JSONResponse({"detail": "profile link not found"}, status_code=404)
         request.state.profile = profile
-        request.scope["path"] = "/" + parts[3] if len(parts) > 3 else "/"
-        return await call_next(request)
+        rest = "/" + parts[3] if len(parts) > 3 else "/"
+
+        # 기기 승인 게이트 - 최대 2대까지는 자동 등록, 3번째부터는 관리자 승인이
+        # 필요하다. 상태 조회/신청 API 자체는 항상 통과시켜야(안 그러면 대기 화면
+        # 자신이 자기 상태를 확인할 방법이 없어짐) 예외로 둔다.
+        device_id = request.cookies.get(profile_devices.PROFILE_DEVICE_COOKIE_NAME)
+        is_new_device_cookie = device_id is None
+        if is_new_device_cookie:
+            device_id = secrets.token_urlsafe(24)
+        request.state.profile_device_id = device_id
+
+        device_status = "approved"
+        if profile_devices.is_device_registered(profile["id"], device_id):
+            profile_devices.touch_device(profile["id"], device_id)
+        elif profile_devices.count_devices(profile["id"]) < profile_devices.MAX_DEVICES_PER_PROFILE:
+            label = request.headers.get("user-agent", "알 수 없는 기기")[:120]
+            profile_devices.register_device(profile["id"], device_id, label)
+        else:
+            pending = profile_devices.get_pending_request(profile["id"], device_id)
+            device_status = "pending" if pending else "needs_request"
+
+        if device_status != "approved" and rest not in ("/api/device/status", "/api/device/request"):
+            if rest.startswith("/api/"):
+                response = JSONResponse(
+                    {"detail": "device_not_approved", "status": device_status}, status_code=403
+                )
+            else:
+                response = FileResponse(os.path.join(STATIC_DIR, "device-approval.html"))
+        else:
+            request.scope["path"] = rest
+            response = await call_next(request)
+
+        if is_new_device_cookie or device_status == "approved":
+            # 새로 발급했거나(최초 방문), 이미 승인되어 정상 접속 중이면(계속 쓰는
+            # 기기) 매 접속마다 유효기간을 다시 늘려서 롤링 갱신한다 - 그래야 자주
+            # 쓰는 기기가 유효기간 만료로 갑자기 다시 승인이 필요해지는 일이 없다.
+            response.set_cookie(
+                profile_devices.PROFILE_DEVICE_COOKIE_NAME,
+                device_id,
+                max_age=profile_devices.PROFILE_DEVICE_COOKIE_MAX_AGE,
+                httponly=True,
+                samesite="lax",
+            )
+        return response
 
     request.state.profile = None
     device_id = request.cookies.get(DEVICE_COOKIE_NAME)
@@ -164,7 +209,7 @@ async def startup_scan():
         log.info("자동 재스캔 비활성화됨 (RESCAN_INTERVAL_SECONDS <= 0)")
 
     if PROFILES_ENABLED:
-        from . import access_requests, auth, discord_notify, profile_progress, profile_settings, profile_time_restrictions, profiles
+        from . import access_requests, auth, discord_notify, profile_devices, profile_progress, profile_settings, profile_time_restrictions, profiles
 
         auth.init_schema()
         profiles.init_schema()
@@ -172,6 +217,7 @@ async def startup_scan():
         profile_progress.init_schema()
         profile_settings.init_schema()
         profile_time_restrictions.init_schema()
+        profile_devices.init_schema()
 
         # 서버가 켜질 때마다 새 비밀번호를 만들어서 로그(+디스코드)에 남긴다. 이미
         # 로그인해서 기억된 기기는 비밀번호가 아니라 기기 쿠키로만 통과되므로(위
@@ -198,10 +244,12 @@ app.include_router(backup.router)
 if PROFILES_ENABLED:
     from .routers import auth as auth_router
     from .routers import browse as browse_router
+    from .routers import device as device_router
     from .routers import profiles as profiles_router
 
     app.include_router(auth_router.router)
     app.include_router(browse_router.router)
+    app.include_router(device_router.router)
     app.include_router(profiles_router.router)
 
 
@@ -209,5 +257,4 @@ if PROFILES_ENABLED:
 # 정적 프론트엔드 (API 라우트 전부 등록된 다음 마지막에 마운트)
 # ---------------------------------------------------------------------------
 
-STATIC_DIR = os.environ.get("STATIC_DIR", "/app/static")
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

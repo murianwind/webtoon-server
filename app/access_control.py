@@ -17,6 +17,11 @@ def get_profile(request: Request) -> dict | None:
     return getattr(request.state, "profile", None)
 
 
+def get_profile_device_id(request: Request) -> str | None:
+    """미들웨어가 이번 요청에 대해 확인/발급한 기기 쿠키 값. 프로필 요청이 아니면 None."""
+    return getattr(request.state, "profile_device_id", None)
+
+
 def ensure_series_accessible(profile: dict | None, series_id: str) -> None:
     """profile이 있는데(공유 링크) 그 시리즈가 허용 목록에 없으면 403.
     profile이 None(관리자)이면 항상 통과 - 기존 동작 그대로.

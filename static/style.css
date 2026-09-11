@@ -1084,6 +1084,11 @@ a {
   margin-left: 6px;
 }
 
+.profile-pending-badge.device {
+  background: #1a2a41;
+  color: #6ab0f0;
+}
+
 .profile-allowed-count {
   color: var(--text-dim);
   font-size: 12px;

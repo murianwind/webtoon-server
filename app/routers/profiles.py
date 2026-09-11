@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from .. import access_control, access_requests, catalog, profile_progress, profile_time_restrictions as time_restrictions, profiles
+from .. import access_control, access_requests, catalog, profile_devices, profile_progress, profile_time_restrictions as time_restrictions, profiles
 
 log = logging.getLogger("webtoon-server")
 # 프로필 관리(생성/수정/삭제, 요청 승인/거부 등)는 전부 관리자 전용이다 - 공유 프로필이
@@ -83,6 +83,7 @@ def list_profiles():
                 **profile,
                 "allowed_count": len(profiles.get_allowed_series_ids(profile["id"])),
                 "pending_request_count": len(pending),
+                "pending_device_request_count": len(profile_devices.list_pending_requests(profile["id"])),
             }
         )
     return result
@@ -108,6 +109,7 @@ def delete_profile(profile_id: str):
         raise HTTPException(404, "profile not found")
     profiles.delete_profile(profile_id)
     profile_progress.delete_all_data_for_profile(profile_id)
+    profile_devices.delete_all_data_for_profile(profile_id)
     return {"ok": True}
 
 
@@ -204,4 +206,20 @@ def undo_reject_request(profile_id: str, series_id: str):
     if profiles.get_profile(profile_id) is None:
         raise HTTPException(404, "profile not found")
     access_requests.clear_rejection(profile_id, series_id)
+    return {"ok": True}
+
+
+@router.get("/api/admin/profiles/{profile_id}/device-requests")
+def list_device_requests(profile_id: str):
+    if profiles.get_profile(profile_id) is None:
+        raise HTTPException(404, "profile not found")
+    return profile_devices.list_pending_requests(profile_id)
+
+
+@router.post("/api/admin/profiles/{profile_id}/device-requests/{device_id}/approve")
+def approve_device_request(profile_id: str, device_id: str):
+    """이미 최대 대수(2대)라면 가장 오래(안 쓴) 기기를 자동으로 교체하고 새 기기를 등록한다."""
+    if profiles.get_profile(profile_id) is None:
+        raise HTTPException(404, "profile not found")
+    profile_devices.approve_request(profile_id, device_id)
     return {"ok": True}
