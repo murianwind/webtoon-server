@@ -81,22 +81,12 @@ async function checkStatus() {
       location.reload();
     } else if (data.status === "pending") {
       renderPending();
-    } else if (data.status === "rejected") {
-      renderRejected();
     } else {
       renderNeedsRequest();
     }
   } catch (e) {
     // 다음 폴링에서 다시 시도
   }
-}
-
-function renderRejected() {
-  box.innerHTML = `
-    <h1>접속이 거부되었어요</h1>
-    <p>관리자가 이 기기의 접속 요청을 거부했어요. 다시 확인이 필요하면 관리자에게 직접 문의해주세요.</p>
-  `;
-  startPolling(); // 관리자가 나중에 마음이 바뀌어 승인할 수도 있으니 계속 확인함
 }
 
 checkStatus();
