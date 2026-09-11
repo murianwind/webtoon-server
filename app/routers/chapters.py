@@ -19,13 +19,15 @@ router = APIRouter()
 
 
 def _resolve_and_authorize(chapter_id: str, profile: dict | None):
-    """이 회차가 속한 시리즈를 찾고, 프로필 접근권한까지 확인한다. 문제 있으면 예외를 던진다."""
+    """이 회차가 속한 시리즈를 찾고, 프로필 접근권한 + 접속 가능 시간대까지 확인한다.
+    문제 있으면 예외를 던진다."""
     zip_path = catalog.get_chapter_zip_path(chapter_id)
     if not zip_path:
         raise HTTPException(404, "chapter not found")
     series, index = catalog.find_chapter_position(chapter_id)
     if series is not None:
         access_control.ensure_series_accessible(profile, series["id"])
+        access_control.ensure_reading_time_allowed(profile, series["id"], chapter_id)
     return zip_path, series, index
 
 

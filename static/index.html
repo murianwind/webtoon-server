@@ -111,6 +111,11 @@
       <div id="profileBrowseFiltersList" class="profile-filter-matrix"></div>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">리더 접속 가능 시간</div>
+      <div class="settings-hint">체크 안 한 요일은 제한 없음(항상 접속 가능). 목록 화면은 시간과 무관하게 항상 볼 수 있고, 실제로 회차를 읽는 것만 막힙니다. 지금 읽던 회차는 시간이 지나도 끝까지 볼 수 있어요.</div>
+      <div id="profileTimeWindowsList" class="profile-time-windows"></div>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">대기중인 요청</div>
       <div id="profileRequestsList" class="lib-list"></div>
     </div>
@@ -1211,17 +1216,19 @@ async function createNewProfile() {
 
 async function openProfileEditor(profileId) {
   editingProfileId = profileId;
-  const [profilesRes, filtersRes, allowedRes, requestsRes] = await Promise.all([
+  const [profilesRes, filtersRes, allowedRes, requestsRes, timeWindowsRes] = await Promise.all([
     fetch("/api/admin/profiles"),
     fetch(`/api/admin/profiles/${profileId}/browse-filters`),
     fetch(`/api/admin/profiles/${profileId}/allowed-series`),
     fetch(`/api/admin/profiles/${profileId}/requests`),
+    fetch(`/api/admin/profiles/${profileId}/time-windows`),
   ]);
   const profilesList = await profilesRes.json();
   const profile = profilesList.find((p) => p.id === profileId);
   const browseFilters = await filtersRes.json();
   const allowedIds = new Set(await allowedRes.json());
   const requests = await requestsRes.json();
+  const timeWindows = await timeWindowsRes.json();
 
   // 매번 새로 불러온다(캐시 안 함) - 원드라이브처럼 느린 플랫폼은 스캔이 늦게 끝나니,
   // 관리자가 이 화면을 스캔 완료 전에 한 번이라도 열면 그 시점의 불완전한 목록이
@@ -1234,6 +1241,7 @@ async function openProfileEditor(profileId) {
   document.getElementById("profileUrlDisplay").textContent = `${location.origin}/p/${profile.token}`;
 
   renderProfileBrowseFilters(browseFilters);
+  renderProfileTimeWindows(timeWindows);
   renderProfileRequests(requests, profileId);
   populateProfileSeriesFilterOptions();
   const allowedListContainer = document.getElementById("profileAllowedSeriesList");
@@ -1283,6 +1291,53 @@ function collectProfileBrowseFilters() {
     filters.push({ platform: el.dataset.platform, age_rating: el.dataset.age });
   });
   return filters;
+}
+
+const TIME_WINDOW_DAY_LABELS = ["월", "화", "수", "목", "금", "토", "일"];
+
+function renderProfileTimeWindows(currentWindows) {
+  const byDay = {};
+  for (const w of currentWindows) byDay[w.day_of_week] = w;
+
+  const container = document.getElementById("profileTimeWindowsList");
+  container.innerHTML = "";
+  for (let day = 0; day < 7; day++) {
+    const existing = byDay[day];
+    const row = document.createElement("div");
+    row.className = "profile-time-window-row";
+    const startStr = existing ? minutesToTimeStr(existing.start_minute) : "18:00";
+    const endStr = existing ? minutesToTimeStr(existing.end_minute) : "21:00";
+    row.innerHTML = `
+      <label><input type="checkbox" data-day="${day}" ${existing ? "checked" : ""}> ${TIME_WINDOW_DAY_LABELS[day]}</label>
+      <input type="time" class="time-window-start" value="${startStr}">
+      <span>~</span>
+      <input type="time" class="time-window-end" value="${endStr}">
+    `;
+    container.appendChild(row);
+  }
+}
+
+function minutesToTimeStr(minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, "0");
+  const m = String(minutes % 60).padStart(2, "0");
+  return `${h}:${m}`;
+}
+
+function timeStrToMinutes(str) {
+  const [h, m] = str.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function collectProfileTimeWindows() {
+  const windows = [];
+  document.querySelectorAll("#profileTimeWindowsList .profile-time-window-row").forEach((row) => {
+    const checkbox = row.querySelector("input[type=checkbox]");
+    if (!checkbox.checked) return;
+    const start = timeStrToMinutes(row.querySelector(".time-window-start").value);
+    const end = timeStrToMinutes(row.querySelector(".time-window-end").value);
+    windows.push({ day_of_week: Number(checkbox.dataset.day), start_minute: start, end_minute: end });
+  });
+  return windows;
 }
 
 function renderProfileRequests(requests, profileId) {
@@ -1381,6 +1436,11 @@ async function saveProfileEditor() {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ filters: collectProfileBrowseFilters() }),
+  });
+  await fetch(`/api/admin/profiles/${editingProfileId}/time-windows`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ windows: collectProfileTimeWindows() }),
   });
   await fetch(`/api/admin/profiles/${editingProfileId}/allowed-series`, {
     method: "PUT",

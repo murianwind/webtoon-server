@@ -10,7 +10,7 @@ profile이 있을 때는 profile_progress.py(완전히 별도 테이블)로 위�
 
 from fastapi import HTTPException, Request
 
-from . import db, profile_progress, profiles
+from . import db, profile_progress, profile_time_restrictions, profiles
 
 
 def get_profile(request: Request) -> dict | None:
@@ -42,6 +42,25 @@ def ensure_series_previewable(profile: dict | None, series: dict) -> None:
     if profiles.series_matches_browse_filters(series, profile["id"]):
         return
     raise HTTPException(403, "not allowed for this profile")
+
+
+def ensure_reading_time_allowed(profile: dict | None, series_id: str, chapter_id: str) -> None:
+    """
+    "리더만" 막는 접속 가능 시간대 검사. 관리자(profile=None)는 항상 통과.
+
+    지금이 허용 시간대여도, 아니어도 아닌지와 무관하게 딱 한 가지 예외가 있다: 그
+    프로필의 "이어보기 포인터"가 가리키는 회차(=지금 읽고 있던 바로 그 회차)는 시간이
+    끝난 뒤에도 계속 볼 수 있다 - 읽다가 갑자기 끊기지 않게. 다만 그 다음 화 등
+    "다른" 회차로 넘어가려는 시도는 시간이 지났으면 막힌다.
+    """
+    if profile is None:
+        return
+    if profile_time_restrictions.is_within_allowed_time(profile["id"]):
+        return
+    prog = profile_progress.get_progress(profile["id"], series_id)
+    if prog and prog["chapter_id"] == chapter_id:
+        return  # 지금 읽던 회차는 시간이 끝나도 예외로 계속 허용
+    raise HTTPException(403, "outside allowed reading time")
 
 
 def get_progress(profile: dict | None, series_id: str) -> dict | None:

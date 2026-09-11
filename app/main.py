@@ -164,13 +164,14 @@ async def startup_scan():
         log.info("자동 재스캔 비활성화됨 (RESCAN_INTERVAL_SECONDS <= 0)")
 
     if PROFILES_ENABLED:
-        from . import access_requests, auth, discord_notify, profile_progress, profile_settings, profiles
+        from . import access_requests, auth, discord_notify, profile_progress, profile_settings, profile_time_restrictions, profiles
 
         auth.init_schema()
         profiles.init_schema()
         access_requests.init_schema()
         profile_progress.init_schema()
         profile_settings.init_schema()
+        profile_time_restrictions.init_schema()
 
         # 서버가 켜질 때마다 새 비밀번호를 만들어서 로그(+디스코드)에 남긴다. 이미
         # 로그인해서 기억된 기기는 비밀번호가 아니라 기기 쿠키로만 통과되므로(위

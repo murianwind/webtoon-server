@@ -8,7 +8,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from .. import access_control, access_requests, catalog, profile_progress, profiles
+from .. import access_control, access_requests, catalog, profile_progress, profile_time_restrictions as time_restrictions, profiles
 
 log = logging.getLogger("webtoon-server")
 # 프로필 관리(생성/수정/삭제, 요청 승인/거부 등)는 전부 관리자 전용이다 - 공유 프로필이
@@ -139,6 +139,27 @@ def get_browse_filters(profile_id: str):
         raise HTTPException(404, "profile not found")
     pairs = profiles.get_browse_filters(profile_id)
     return [{"platform": p, "age_rating": a} for p, a in pairs]
+
+
+class TimeWindowsIn(BaseModel):
+    # [{"day_of_week": 0-6(월=0), "start_minute": 0-1439, "end_minute": 0-1439}, ...]
+    windows: list[dict]
+
+
+@router.put("/api/admin/profiles/{profile_id}/time-windows")
+def set_time_windows(profile_id: str, body: TimeWindowsIn):
+    """리더(회차 페이지)만 막는 접속 가능 시간대. 빈 목록이면 제한 없음."""
+    if profiles.get_profile(profile_id) is None:
+        raise HTTPException(404, "profile not found")
+    time_restrictions.set_time_windows(profile_id, body.windows)
+    return {"ok": True}
+
+
+@router.get("/api/admin/profiles/{profile_id}/time-windows")
+def get_time_windows(profile_id: str):
+    if profiles.get_profile(profile_id) is None:
+        raise HTTPException(404, "profile not found")
+    return time_restrictions.get_time_windows(profile_id)
 
 
 class AllowedSeriesIn(BaseModel):
