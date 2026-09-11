@@ -69,8 +69,11 @@ def test_reader_blocked_outside_window_but_list_still_works(profile_with_two_cha
 
         """WHEN 시간대 밖에 회차 페이지를 요청하면"""
         r = client.get(f"/p/{token}/api/chapters/{chapter_id}/pages/0")
-        """THEN 403으로 막힌다"""
+        """THEN 403으로 막히고, 실제 설정된 창 목록이 응답에 포함된다(프론트에서 안내문에 씀)"""
         assert r.status_code == 403
+        detail = r.json()["detail"]
+        assert detail["reason"] == "outside_allowed_reading_time"
+        assert detail["windows"] == [{"day_of_week": 0, "start_minute": 18 * 60, "end_minute": 21 * 60}]
 
         """AND 같은 시간에도 시리즈 목록/회차 목록은 정상 조회된다(리더만 막으므로)"""
         assert client.get(f"/p/{token}/api/series").status_code == 200

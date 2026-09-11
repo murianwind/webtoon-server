@@ -1400,6 +1400,10 @@ function renderProfileSeriesChecklist() {
   let list = profileSeriesCatalogCache;
   if (platformFilter) list = list.filter((s) => s.platform === platformFilter);
   if (ageFilter) list = list.filter((s) => s.age_rating === ageFilter);
+  // 이미 허용된 시리즈를 목록 맨 위로 - 카탈로그가 크면 지금 허용 상태가 어떤지
+  // 스크롤해서 찾아야 해서 불편했다. Array.sort는 안정 정렬이라 같은 그룹
+  // 안에서는(허용/비허용 각각) 원래(플랫폼·제목) 순서가 그대로 유지된다.
+  list = [...list].sort((a, b) => (allowedIds.has(b.id) ? 1 : 0) - (allowedIds.has(a.id) ? 1 : 0));
 
   container.innerHTML = "";
   for (const series of list) {

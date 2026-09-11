@@ -60,7 +60,10 @@ def ensure_reading_time_allowed(profile: dict | None, series_id: str, chapter_id
     prog = profile_progress.get_progress(profile["id"], series_id)
     if prog and prog["chapter_id"] == chapter_id:
         return  # 지금 읽던 회차는 시간이 끝나도 예외로 계속 허용
-    raise HTTPException(403, "outside allowed reading time")
+    # 프론트엔드가 "무슨 요일/시간에 볼 수 있는지"를 직접 안내문에 넣을 수 있도록,
+    # 단순 문자열이 아니라 그 프로필에 설정된 창 목록까지 같이 내려준다.
+    windows = profile_time_restrictions.get_time_windows(profile["id"])
+    raise HTTPException(403, {"reason": "outside_allowed_reading_time", "windows": windows})
 
 
 def get_progress(profile: dict | None, series_id: str) -> dict | None:

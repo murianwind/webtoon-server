@@ -139,8 +139,13 @@ function showError() {
   pagesEl.innerHTML = `<div class="empty-state">회차를 불러올 수 없습니다.</div>`;
 }
 
-function showTimeRestrictedMessage() {
-  pagesEl.innerHTML = `<div class="empty-state">지금은 접속 가능한 시간이 아니에요.<br>정해진 시간에 다시 열어주세요.</div>`;
+function showTimeRestrictedMessage(windows) {
+  const dayLabels = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"];
+  const formatMinutes = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  const scheduleText = (windows || [])
+    .map((w) => `${dayLabels[w.day_of_week]} ${formatMinutes(w.start_minute)}~${formatMinutes(w.end_minute)}`)
+    .join(", ");
+  pagesEl.innerHTML = `<div class="empty-state">지금은 웹툰 보는 시간이 아니에요.<br>웹툰은 ${scheduleText || "정해진 시간"}에만 볼 수 있어요.<br>요일과 시간 변경을 원하시면 관리자에게 요청하세요.</div>`;
 }
 
 let positioningTimer = null;
@@ -786,8 +791,8 @@ async function appendChapter(chapter, { scrollToPage = null, skipPages = 0 } = {
   const res = await fetch(`/api/chapters/${encodeURIComponent(chapter.id)}/pages`);
   if (!res.ok) {
     const errorBody = await res.json().catch(() => ({}));
-    if (res.status === 403 && errorBody.detail === "outside allowed reading time") {
-      showTimeRestrictedMessage();
+    if (res.status === 403 && errorBody.detail && errorBody.detail.reason === "outside_allowed_reading_time") {
+      showTimeRestrictedMessage(errorBody.detail.windows);
       return;
     }
     showError();
