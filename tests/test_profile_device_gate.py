@@ -120,3 +120,22 @@ def test_admin_access_is_never_gated_by_profile_device_limit(profile_setup):
     admin_client = profile_setup["admin_client"]
     """THEN 전혀 영향 없이 통과한다"""
     assert admin_client.get("/api/series").status_code == 200
+
+
+def test_gated_page_responses_are_never_cached(profile_setup):
+    """GIVEN 기기 게이트를 거치는 페이지 응답일 때(대기 화면이든 실제 화면이든)"""
+    token = profile_setup["token"]
+
+    """WHEN 대기 화면이 나오는 경우(3번째 기기)"""
+    TestClient(profile_setup["app"]).get(f"/p/{token}/api/series")
+    TestClient(profile_setup["app"]).get(f"/p/{token}/api/series")
+    device3 = TestClient(profile_setup["app"])
+    r_blocked = device3.get(f"/p/{token}/")
+
+    """THEN 캐시하지 말라는 헤더가 붙어있다 - 안 그러면 승인된 뒤에도 브라우저가
+    서버에 다시 묻지 않고 캐시된 대기 화면을 계속 보여주는 문제가 생긴다"""
+    assert r_blocked.headers.get("cache-control") == "no-store"
+
+    """AND 승인되어 실제 화면이 나오는 경우도 마찬가지로 캐시되지 않는다"""
+    r_allowed = TestClient(profile_setup["app"]).get(f"/p/{token}/")
+    assert r_allowed.headers.get("cache-control") == "no-store"

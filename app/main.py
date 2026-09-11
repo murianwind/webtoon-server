@@ -161,6 +161,14 @@ async def profile_and_admin_gate(request, call_next):
             request.scope["path"] = rest
             response = await call_next(request)
 
+        if not rest.startswith("/api/"):
+            # "/p/<토큰>/" 같은 페이지 경로는 같은 URL이라도 승인 상태에 따라 완전히
+            # 다른 내용(대기 화면 vs 실제 화면)을 내려주는 것이라, 브라우저가 예전
+            # 응답을 캐시해서 재사용하면 안 된다 - 그러면 승인된 뒤에도 브라우저가
+            # 서버한테 다시 묻지도 않고 캐시된 대기 화면을 계속 보여주는 문제가
+            # 생긴다(실제로 이 문제가 있었다: 승인 후 새로고침해도 대기 화면만 반복).
+            response.headers["Cache-Control"] = "no-store"
+
         if is_new_device_cookie or device_status == "approved":
             # 새로 발급했거나(최초 방문), 이미 승인되어 정상 접속 중이면(계속 쓰는
             # 기기) 매 접속마다 유효기간을 다시 늘려서 롤링 갱신한다 - 그래야 자주
