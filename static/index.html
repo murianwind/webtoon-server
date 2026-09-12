@@ -813,6 +813,11 @@ rescanBtn.addEventListener("click", async () => {
         return;
       }
       if (!atTop()) return; // 스크롤이 이미 내려간 상태면 당기기로 취급하지 않음
+      // PWA(홈 화면에 추가) 독립 실행 모드에서는 브라우저가 이 제스처를 자체적인
+      // 고무줄 튕김/새로고침 동작으로 먼저 가져가버려서 우리 핸들러까지 손가락 움직임이
+      // 제대로 전달 안 되는 경우가 있다 - 그래서 당기는 중임이 확인되면 브라우저 기본
+      // 동작을 명시적으로 막아서(preventDefault) 이 제스처를 완전히 가로챈다.
+      e.preventDefault();
       pulling = true;
       indicator.classList.add("pulling");
       const pulled = Math.min(delta * 0.5, MAX_PULL); // 실제 손가락 이동보다 절반만 반영(고무줄 느낌)
@@ -820,7 +825,7 @@ rescanBtn.addEventListener("click", async () => {
       indicator.querySelector(".pull-refresh-spinner").style.transform =
         `rotate(${Math.min(pulled / PULL_THRESHOLD, 1) * 360}deg)`;
     },
-    { passive: true }
+    { passive: false }
   );
 
   document.addEventListener("touchend", async () => {
