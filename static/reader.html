@@ -772,7 +772,7 @@ async function prefetchNextChapter(afterChapterId) {
     const pageCount = Math.min(data.page_count || 0, PREFETCH_PAGE_LIMIT);
     const urls = [];
     for (let i = 0; i < pageCount; i++) {
-      urls.push(`/api/chapters/${encodeURIComponent(next.id)}/pages/${i}`);
+      urls.push(withProfilePrefix(`/api/chapters/${encodeURIComponent(next.id)}/pages/${i}`));
     }
     prefetchImages(urls);
   } catch (e) {
@@ -787,7 +787,7 @@ async function revealSkippedPages(chapter, skipCount, wrapEl) {
     img.dataset.chapter = chapter.id;
     img.dataset.page = String(i);
     img.dataset.key = `${chapter.id}:${i}`;
-    img.src = `/api/chapters/${encodeURIComponent(chapter.id)}/pages/${i}`;
+    img.src = withProfilePrefix(`/api/chapters/${encodeURIComponent(chapter.id)}/pages/${i}`);
     img.alt = `${i + 1}페이지`;
     img.addEventListener("load", () => sizeImageForFullscreen(img));
     pageObserver.observe(img);
@@ -837,7 +837,7 @@ async function appendChapter(chapter, { scrollToPage = null, skipPages = 0 } = {
     img.dataset.chapter = chapter.id;
     img.dataset.page = String(i);
     img.dataset.key = `${chapter.id}:${i}`;
-    img.src = `/api/chapters/${encodeURIComponent(chapter.id)}/pages/${i}`;
+    img.src = withProfilePrefix(`/api/chapters/${encodeURIComponent(chapter.id)}/pages/${i}`);
     img.alt = `${i + 1}페이지`;
     img.addEventListener("load", () => sizeImageForFullscreen(img));
     pagesEl.appendChild(img);
