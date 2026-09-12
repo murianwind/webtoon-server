@@ -103,6 +103,15 @@ function readerSettingKey(baseKey) {
   return readerSettingsScope === "per_series" ? `${baseKey}:${seriesId}` : baseKey;
 }
 
+function localCacheKey(baseKey) {
+  // localStorage는 브라우저 전체(도메인 단위)에서 공유되므로, 관리자/여러 프로필을
+  // 같은 브라우저로 오가면 이 캐시값이 서로 섞여 보일 수 있다(서버에 값이 오기 전
+  // 아주 잠깐 동안). 프로필 토큰을 붙여서 이 캐시만큼은 완전히 분리한다 - 서버 쪽
+  // API 키(readerSettingKey)는 요청 컨텍스트로 이미 프로필별로 분리되어 있으니
+  // 그대로 두고, 여기 로컬 캐시 키에만 추가로 붙인다.
+  return `${readerSettingKey(baseKey)}:${PROFILE_TOKEN || "admin"}`;
+}
+
 async function loadReaderSettingsScope() {
   try {
     const res = await fetch(`/api/settings/${READER_SCOPE_SETTING_KEY}`);
@@ -181,7 +190,7 @@ function fullscreenSettingKey() {
 async function readFullscreenPreference() {
   // 서버 설정을 우선 사용하되, 서버에 값이 없거나 요청에 실패하면
   // 기존 브라우저의 localStorage 값도 사용할 수 있게 한다.
-  const localValue = localStorage.getItem(fullscreenSettingKey());
+  const localValue = localStorage.getItem(localCacheKey(FULLSCREEN_BASE_KEY));
   if (localValue !== null) fullscreenPreference = localValue === "1";
 
   try {
@@ -190,7 +199,7 @@ async function readFullscreenPreference() {
       const data = await res.json();
       if (data.value === "1" || data.value === "0") {
         fullscreenPreference = data.value === "1";
-        localStorage.setItem(fullscreenSettingKey(), data.value);
+        localStorage.setItem(localCacheKey(FULLSCREEN_BASE_KEY), data.value);
       }
     }
   } catch (e) {
@@ -200,7 +209,7 @@ async function readFullscreenPreference() {
 
 async function writeFullscreenPreference(enabled) {
   fullscreenPreference = enabled;
-  localStorage.setItem(fullscreenSettingKey(), enabled ? "1" : "0");
+  localStorage.setItem(localCacheKey(FULLSCREEN_BASE_KEY), enabled ? "1" : "0");
   try {
     await fetch(`/api/settings/${encodeURIComponent(fullscreenSettingKey())}`, {
       method: "PUT",
@@ -283,7 +292,8 @@ async function loadScrollSpeed() {
   // 서버 설정을 우선 사용하되, 서버에 값이 없거나 요청에 실패하면
   // 기존 브라우저의 localStorage 값도 사용할 수 있게 한다 (전체화면 설정과 동일한 방식).
   const key = readerSettingKey(SCROLL_SPEED_BASE_KEY);
-  const localValue = parseFloat(localStorage.getItem(key) || "");
+  const localKey = localCacheKey(SCROLL_SPEED_BASE_KEY);
+  const localValue = parseFloat(localStorage.getItem(localKey) || "");
   if (SCROLL_SPEEDS.includes(localValue)) scrollSpeed = localValue;
 
   try {
@@ -293,7 +303,7 @@ async function loadScrollSpeed() {
       const serverValue = parseFloat(data.value || "");
       if (SCROLL_SPEEDS.includes(serverValue)) {
         scrollSpeed = serverValue;
-        localStorage.setItem(key, String(serverValue));
+        localStorage.setItem(localKey, String(serverValue));
       }
     }
   } catch (e) {
@@ -304,7 +314,7 @@ async function loadScrollSpeed() {
 
 function saveScrollSpeed() {
   const key = readerSettingKey(SCROLL_SPEED_BASE_KEY);
-  localStorage.setItem(key, String(scrollSpeed));
+  localStorage.setItem(localCacheKey(SCROLL_SPEED_BASE_KEY), String(scrollSpeed));
   fetch(`/api/settings/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -480,7 +490,8 @@ async function loadZoomPercent() {
   // 서버 설정을 우선 사용하되, 서버에 값이 없거나 요청에 실패하면
   // 기존 브라우저의 localStorage 값도 사용할 수 있게 한다 (전체화면 설정과 동일한 방식).
   const key = readerSettingKey(ZOOM_BASE_KEY);
-  const localValue = parseInt(localStorage.getItem(key) || "", 10);
+  const localKey = localCacheKey(ZOOM_BASE_KEY);
+  const localValue = parseInt(localStorage.getItem(localKey) || "", 10);
   if (Number.isFinite(localValue) && localValue >= ZOOM_MIN && localValue <= ZOOM_MAX) {
     zoomPercent = localValue;
   }
@@ -492,7 +503,7 @@ async function loadZoomPercent() {
       const serverValue = parseInt(data.value || "", 10);
       if (Number.isFinite(serverValue) && serverValue >= ZOOM_MIN && serverValue <= ZOOM_MAX) {
         zoomPercent = serverValue;
-        localStorage.setItem(key, String(serverValue));
+        localStorage.setItem(localKey, String(serverValue));
       }
     }
   } catch (e) {
@@ -502,7 +513,7 @@ async function loadZoomPercent() {
 
 function saveZoomPercent() {
   const key = readerSettingKey(ZOOM_BASE_KEY);
-  localStorage.setItem(key, String(zoomPercent));
+  localStorage.setItem(localCacheKey(ZOOM_BASE_KEY), String(zoomPercent));
   fetch(`/api/settings/${encodeURIComponent(key)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

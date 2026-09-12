@@ -198,7 +198,7 @@ function withProfilePrefix(path) {
   return IS_PROFILE_VIEW ? `/p/${PROFILE_TOKEN}${path}` : path;
 }
 
-const LS_QUERY = "webtoon:index:query";
+const LS_QUERY = `webtoon:index:query:${PROFILE_TOKEN || "admin"}`; // 검색어는 관리자/프로필별로 완전히 분리 저장
 const FILTER_KEY = "status_filter"; // 서버(app_settings)에 저장 -> 모든 기기에서 동일하게 적용
 const PLATFORM_FILTER_KEY = "platform_filter"; // 위와 같은 이유로 서버에 저장
 const SORT_KEY = "sort_mode"; // 위와 같은 이유로 서버에 저장(검색어는 입력마다 바뀌어서 과하니 localStorage 유지)
@@ -1095,7 +1095,7 @@ async function openChapterSidebar(series) {
     row.dataset.chapterId = ch.id;
     row.title = "클릭하면 읽음/안읽음이 바뀝니다";
     renderChapterRowStatus(row, ch);
-    row.addEventListener("click", () => toggleChapterReadState(series.id, ch, row));
+    row.addEventListener("click", () => toggleChapterReadState(series, ch));
     chapterSidebarList.appendChild(row);
   }
 
@@ -1111,24 +1111,27 @@ function renderChapterRowStatus(row, ch) {
   `;
 }
 
-async function toggleChapterReadState(seriesId, ch, row) {
-  if (row.dataset.busy === "1") return; // 응답 오기 전 중복 클릭 방지
-  row.dataset.busy = "1";
+async function toggleChapterReadState(series, ch) {
+  if (chapterSidebarList.dataset.busy === "1") return; // 응답 오기 전 중복 클릭 방지
+  chapterSidebarList.dataset.busy = "1";
   try {
-    const res = await fetch(
-      `/api/series/${encodeURIComponent(seriesId)}/chapters/${encodeURIComponent(ch.id)}/toggle-read`,
-      { method: "POST" }
-    );
+    // 리더에서 자연스럽게 스크롤해서 읽어나가는 것과 똑같이 "이 회차까지(포함) 이전
+    // 전부"를 읽음/안읽음으로 처리한다(그 회차 하나만 콕 집어 바꾸는 게 아니라) -
+    // 이미 읽은 회차를 다시 누르면 그 회차부터 이후 전부가 안읽음으로 되돌아간다.
+    const res = await fetch(`/api/series/${encodeURIComponent(series.id)}/read-state`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "chapter", read: !ch.read, chapter_id: ch.id }),
+    });
     if (!res.ok) throw new Error("toggle failed");
-    const data = await res.json();
-    ch.read = data.read;
-    ch.reading = false; // 방금 상태를 바꿨으니 "읽는 중" 표시는 더 이상 유효하지 않음
-    renderChapterRowStatus(row, ch);
+    // 이 회차 하나만이 아니라 앞뒤 여러 회차의 상태가 같이 바뀌었을 수 있으니,
+    // 사이드바 전체를 다시 불러와서 정확하게 다시 그린다.
+    await openChapterSidebar(series);
     load(); // 메인 화면의 안읽음 배지/진행률도 갱신 (기다리지 않고 백그라운드로)
   } catch (e) {
     // 실패해도 조용히 무시 - 표시는 그대로 두고 다시 시도할 수 있게 함
   } finally {
-    row.dataset.busy = "0";
+    chapterSidebarList.dataset.busy = "0";
   }
 }
 
