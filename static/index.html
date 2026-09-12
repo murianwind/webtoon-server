@@ -23,6 +23,9 @@
   <button id="settingsBtn" class="rescan-btn" title="라이브러리/백업 설정" aria-label="설정">⚙</button>
   <button id="rescanBtn" class="rescan-btn" title="새로고침(재스캔)" aria-label="재스캔">⟳</button>
 </header>
+<div id="pullToRefreshIndicator" class="pull-refresh-indicator">
+  <div class="pull-refresh-spinner"></div>
+</div>
 <div class="toolbar">
   <input id="searchInput" class="search-input" type="text" placeholder="제목 검색">
   <select id="sortSelect" class="sort-select">
@@ -761,6 +764,87 @@ rescanBtn.addEventListener("click", async () => {
     rescanBtn.classList.remove("spinning");
   }
 });
+
+// ---------------------------------------------------------------------
+// 당겨서 새로고침(pull-to-refresh) - 맨 위로 스크롤된 상태에서 아래로 당기면 페이지를
+// 그대로 새로고침한다(재스캔 아님, 그냥 location.reload()). PWA(홈 화면에 추가)로
+// 열었을 때는 브라우저 기본 pull-to-refresh가 없어서, 터치 이벤트로 직접 구현한다.
+(function setupPullToRefresh() {
+  const indicator = document.getElementById("pullToRefreshIndicator");
+  const PULL_THRESHOLD = 70; // 이 정도 당겨야 "놓으면 새로고침"으로 인정
+  const MAX_PULL = 100; // 아무리 더 당겨도 인디케이터 높이는 여기까지만
+  let startY = null;
+  let pulling = false;
+  let refreshing = false;
+
+  function anyOverlayOpen() {
+    return document.querySelectorAll(".sidebar-overlay.open").length > 0;
+  }
+
+  function atTop() {
+    return (document.scrollingElement || document.documentElement).scrollTop <= 0;
+  }
+
+  document.addEventListener(
+    "touchstart",
+    (e) => {
+      if (refreshing || anyOverlayOpen() || !atTop() || e.touches.length !== 1) {
+        startY = null;
+        return;
+      }
+      startY = e.touches[0].clientY;
+      pulling = false;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchmove",
+    (e) => {
+      if (startY === null || refreshing) return;
+      const delta = e.touches[0].clientY - startY;
+      if (delta <= 0) {
+        // 위로 스크롤하는 정상적인 동작이면 당기기를 취소하고 원래 스크롤에 맡긴다.
+        if (pulling) {
+          pulling = false;
+          indicator.classList.remove("pulling");
+          indicator.style.height = "0px";
+        }
+        return;
+      }
+      if (!atTop()) return; // 스크롤이 이미 내려간 상태면 당기기로 취급하지 않음
+      pulling = true;
+      indicator.classList.add("pulling");
+      const pulled = Math.min(delta * 0.5, MAX_PULL); // 실제 손가락 이동보다 절반만 반영(고무줄 느낌)
+      indicator.style.height = `${pulled}px`;
+      indicator.querySelector(".pull-refresh-spinner").style.transform =
+        `rotate(${Math.min(pulled / PULL_THRESHOLD, 1) * 360}deg)`;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener("touchend", async () => {
+    if (!pulling) {
+      startY = null;
+      return;
+    }
+    const pulledHeight = parseFloat(indicator.style.height) || 0;
+    pulling = false;
+    startY = null;
+
+    if (pulledHeight < PULL_THRESHOLD * 0.5) {
+      indicator.classList.remove("pulling");
+      indicator.style.height = "0px";
+      return;
+    }
+
+    refreshing = true;
+    indicator.classList.remove("pulling");
+    indicator.classList.add("refreshing");
+    indicator.style.height = `${PULL_THRESHOLD}px`;
+    location.reload(); // 말 그대로 페이지 새로고침(재스캔 아님)
+  });
+})();
 
 // ---------------------------------------------------------------------
 // 설정 패널: 시리즈 폴더 제외/포함 + 백업/복원

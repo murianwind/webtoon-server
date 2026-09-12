@@ -44,6 +44,42 @@ a {
   margin: 0;
 }
 
+/* ---------- 당겨서 새로고침(pull-to-refresh) 인디케이터 ---------- */
+
+.pull-refresh-indicator {
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: height 0.2s ease;
+  /* PWA(홈 화면 추가) 상태에서는 브라우저 기본 pull-to-refresh가 없어서, 이 값들을
+     JS가 실시간으로 손가락 위치에 맞춰 바꿔가며 직접 당겨지는 느낌을 만든다. */
+}
+
+.pull-refresh-indicator.pulling,
+.pull-refresh-indicator.refreshing {
+  overflow: visible;
+}
+
+.pull-refresh-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  transition: transform 0.1s linear;
+}
+
+.pull-refresh-indicator.refreshing .pull-refresh-spinner {
+  animation: pull-refresh-spin 0.7s linear infinite;
+}
+
+@keyframes pull-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+
 .topbar .back {
   font-size: 20px;
   padding: 4px 8px;
