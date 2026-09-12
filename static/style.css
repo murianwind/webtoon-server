@@ -17,6 +17,10 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
+  /* iOS 독립 실행(홈 화면 추가) 모드에서는 브라우저 자체의 고무줄 튕김/새로고침
+     제스처가 우리 당겨서 새로고침 JS보다 먼저 이 제스처를 가져가버리는 경우가
+     있다 - 이걸 꺼서 JS가 손가락 움직임을 온전히 넘겨받게 한다. */
+  overscroll-behavior-y: none;
 }
 
 a {

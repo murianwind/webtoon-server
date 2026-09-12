@@ -8,6 +8,13 @@
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#14161a">
+<!-- iOS는 manifest.json의 "display": "standalone"만으로는 홈 화면 추가 시 완전한
+     독립 실행 취급을 안 해주는 경우가 있어서(구형 iOS일수록 더 그렇다), 애플 전용
+     메타 태그로 명시적으로 알려줘야 상단에서의 제스처 처리도 일반 웹페이지가 아닌
+     독립 앱처럼 동작한다. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="웹툰">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="웹툰">
