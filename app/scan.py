@@ -73,7 +73,12 @@ def _series_prefix_length(content: str, series_name: str) -> int:
     pattern = r"^" + _SEPARATOR_CLASS.join(re.escape(p) for p in parts) + _SEPARATOR_CLASS
     match = re.match(pattern, content)
     if match and match.end() > 0:
-        return match.end()
+        end_pos = match.end()
+        # 숫자가 중간에 잘리는 경우 방지 (예: 시리즈명 '에스탄시아1', 파일명 '에스탄시아10' -> '0'으로 잘리는 것 방지)
+        if end_pos < len(content):
+            if content[end_pos - 1].isdigit() and content[end_pos].isdigit():
+                return 0
+        return end_pos
     return 0
 
 
