@@ -22,6 +22,7 @@ log = logging.getLogger("webtoon-server")
 LIBRARY_ROOT = os.environ.get("LIBRARY_ROOT", "/library")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+ARCHIVE_EXTS = {".zip", ".cbz"}
 COVER_FILENAMES = {"cover.jpg", "cover.jpeg", "cover.png", "cover.webp"}
 INFO_FILENAME = "info.xml"
 
@@ -176,7 +177,7 @@ def _scan_series_at_path(platform: str, series_ref: str, series_path: str) -> tu
     같은 로직을 중복 없이 공유하기 위해 따로 뺀 것.
     """
     series_name = os.path.basename(series_ref)
-    zip_filenames = [f for f in os.listdir(series_path) if f.lower().endswith(".zip")]
+    zip_filenames = [f for f in os.listdir(series_path) if os.path.splitext(f.lower())[1] in ARCHIVE_EXTS]
     if not zip_filenames:
         return None
 
@@ -184,7 +185,7 @@ def _scan_series_at_path(platform: str, series_ref: str, series_path: str) -> tu
     chapters = []
     chapters_map = {}
     for zip_filename in zip_filenames:
-        stem = zip_filename[:-4]
+        stem = os.path.splitext(zip_filename)[0]
         sort_key, label = parse_chapter_label(stem, series_name)
         chapter_id = make_id(platform, series_ref, zip_filename)
         full_path = os.path.join(series_path, zip_filename)
@@ -287,8 +288,8 @@ def iter_platform_series_streaming(platform: str):
     excluded = db.get_excluded_series()
     for dirpath, dirnames, filenames in os.walk(platform_path):
         dirnames.sort()
-        has_zip = any(f.lower().endswith(".zip") for f in filenames)
-        if not has_zip:
+        has_archive = any(os.path.splitext(f.lower())[1] in ARCHIVE_EXTS for f in filenames)
+        if not has_archive:
             continue
         dirnames.clear()  # 시리즈 폴더로 인식된 곳 안쪽은 더 내려가지 않음(중복/오인 방지)
         series_ref = os.path.relpath(dirpath, platform_path).replace(os.sep, "/")
