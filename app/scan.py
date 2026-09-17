@@ -144,7 +144,11 @@ def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
     # 그 외: "화" 표시도 "#번호"도 없는 경우 (예: 번외편)
     label = _clean_title(content, strip_trailing_hash=True)
     if not label:
-        label = stem
+        # 시리즈 이름을 지웠더니 남은 텍스트가 없는 경우 (예: 0001_에스탄시아1#25)
+        # 이름을 지우기 전 원본 텍스트(rest)에서 부가 번호만 정리하여 차선책으로 씁니다.
+        label = _clean_title(rest, strip_trailing_hash=True)
+        if not label:
+            label = stem
     return sort_key, label
 
 
