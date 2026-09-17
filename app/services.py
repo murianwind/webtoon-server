@@ -166,14 +166,27 @@ async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
     return catalog.get_series_map(), catalog.get_chapters_map()
 
 
+async def _precompute_after_scan() -> None:
+    """겹침 계산(overlap, OpenCV)과 커버 생성(Pillow)을 순서대로 실행한다.
+
+    예전에는 asyncio.create_task()로 이 둘을 동시에 따로 띄웠는데, 그러면 서로 다른
+    스레드에서 OpenCV와 Pillow의 네이티브(C) 이미지 처리 코드가 동시에 실행될 수
+    있다. 이 두 라이브러리가 그런 동시 호출을 완전히 안전하게 보장하지는 않아서,
+    실제로 이 동시 실행 타이밍에 따라 간헐적으로(몇 초 만에, 또는 몇 시간 뒤에)
+    세그멘테이션 폴트로 프로세스 전체가 죽는 문제가 있었다 - 파이썬 예외가 아니라서
+    로그에 아무 흔적도 안 남고 조용히 종료됐다. 하나씩 순서대로 실행하면 이 동시
+    네이티브 호출 자체가 없어지므로 안전하다."""
+    await overlap.precompute_overlaps()
+    await precompute_covers()
+
+
 async def initial_scan() -> None:
     """서버 시작 시 백그라운드로 실행되는 첫 스캔."""
     log.info(f"라이브러리 스캔 시작 (경로: {scan.LIBRARY_ROOT}) - 백그라운드로 진행, 서버는 이미 요청을 받고 있음")
     try:
         series_map, chapters_map = await scan_all_platforms_incrementally()
         log_scan_result(f"라이브러리 스캔 완료 (경로: {scan.LIBRARY_ROOT})", series_map, chapters_map)
-        asyncio.create_task(overlap.precompute_overlaps())
-        asyncio.create_task(precompute_covers())
+        asyncio.create_task(_precompute_after_scan())
     except Exception:
         log.exception("초기 스캔 중 오류 발생")
 
@@ -188,8 +201,7 @@ async def auto_rescan_loop() -> None:
             added = len(set(series_map.keys()) - old_ids)
             removed = len(old_ids - set(series_map.keys()))
             log_scan_result("자동 재스캔 완료", series_map, chapters_map, added, removed)
-            asyncio.create_task(overlap.precompute_overlaps())
-            asyncio.create_task(precompute_covers())
+            asyncio.create_task(_precompute_after_scan())
         except Exception:
             # 한 번 실패해도 다음 주기에 다시 시도 - 서버가 죽으면 안 됨
             log.exception("자동 재스캔 중 오류 발생 - 다음 주기에 재시도")
