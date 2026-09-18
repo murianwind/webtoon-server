@@ -106,3 +106,59 @@ def test_local_platforms_are_scanned_before_slow_platforms(client, library, monk
 
     """THEN 이름순으로는 aaa_slow가 앞이어야 하지만, SLOW_PLATFORMS 지정 때문에 뒤로 밀린다"""
     assert order == ["zzz_local", "aaa_slow"]
+
+
+def test_folder_list_only_grows_during_scan_never_shrinks_midway(client, library):
+    """GIVEN 이전 스캔에서 이미 폴더 3개를 다 알고 있는 상태일 때(설정 패널의
+    "스캔 중/제외된 폴더" 목록에 이미 반영되어 있음)"""
+    from app import catalog
+
+    catalog.add_platform_folder_ref("naver", "웹툰A")
+    catalog.add_platform_folder_ref("naver", "웹툰B")
+    catalog.add_platform_folder_ref("naver", "웹툰C")
+    before = {ref for _, ref in catalog.get_all_folder_refs()}
+    assert before == {"웹툰A", "웹툰B", "웹툰C"}
+
+    """WHEN 새 스캔이 시작되어 폴더를 하나씩 다시 발견해나가는 중(아직 완주 전)"""
+    catalog.add_platform_folder_ref("naver", "웹툰A")  # 재발견 - 중복 추가되면 안 됨
+    during_scan = {ref for _, ref in catalog.get_all_folder_refs()}
+
+    """THEN 스캔이 끝나기 전인데도 이미 알고 있던 웹툰B, 웹툰C가 목록에서 사라지지
+    않는다(예전에는 이 시점에 "지금까지 이번 스캔에서 본 것만" 남기는 방식이라
+    스캔이 끝날 때까지 웹툰B, 웹툰C가 화면에서 사라졌었다)"""
+    assert during_scan == {"웹툰A", "웹툰B", "웹툰C"}
+
+
+def test_failed_scan_does_not_lose_folders_not_yet_reached(client, library):
+    """GIVEN 이전 스캔에서 폴더 3개를 알고 있는 상태에서"""
+    from app import catalog
+
+    catalog.add_platform_folder_ref("naver", "웹툰A")
+    catalog.add_platform_folder_ref("naver", "웹툰B")
+    catalog.add_platform_folder_ref("naver", "웹툰C")
+
+    """WHEN 이번 스캔이 웹툰A만 발견한 상태에서 타임아웃/오류로 중단되면(completed=False라서
+    prune을 호출하지 않는 상황을 그대로 재현)"""
+    catalog.add_platform_folder_ref("naver", "웹툰A")
+    # prune_platform_folder_refs를 호출하지 않음 - 완주 못 했으므로
+
+    """THEN 아직 못 훑은 웹툰B, 웹툰C도 그대로 남아있어야 한다(제외/포함 조작이
+    계속 가능해야 하므로)"""
+    refs = {ref for _, ref in catalog.get_all_folder_refs()}
+    assert refs == {"웹툰A", "웹툰B", "웹툰C"}
+
+
+def test_completed_scan_prunes_genuinely_deleted_folders(client, library):
+    """GIVEN 폴더 3개를 알고 있는 상태에서"""
+    from app import catalog
+
+    catalog.add_platform_folder_ref("naver", "웹툰A")
+    catalog.add_platform_folder_ref("naver", "웹툰B")
+    catalog.add_platform_folder_ref("naver", "웹툰C")
+
+    """WHEN 스캔이 끝까지 완주됐는데 웹툰B는 실제로 폴더가 삭제되어 이번엔 못 봤다면"""
+    catalog.prune_platform_folder_refs("naver", {"웹툰A", "웹툰C"})
+
+    """THEN 이번에는(완주했으므로) 진짜로 사라진 웹툰B만 정리된다"""
+    refs = {ref for _, ref in catalog.get_all_folder_refs()}
+    assert refs == {"웹툰A", "웹툰C"}

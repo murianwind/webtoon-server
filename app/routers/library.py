@@ -92,14 +92,11 @@ async def include_series_folder(body: SeriesFolderRef):
     if result:
         series_entry, chapters_map = result
         catalog.add_series(series_entry, chapters_map)
-
-        async def _precompute_for_new_series() -> None:
-            # 겹침(OpenCV)과 커버 생성(Pillow)을 동시에 띄우면 서로 다른 스레드에서
-            # 네이티브 이미지 처리 코드가 동시에 실행되어 간헐적으로 프로세스가
-            # 세그폴트로 죽는 문제가 있었다 - 순서대로 실행해서 그 동시 호출 자체를 없앤다.
-            await overlap.precompute_overlaps()
-            await services.precompute_one_cover_with_timeout(series_entry)
-
-        asyncio.create_task(_precompute_for_new_series())
+        # services._run_precompute를 그대로 써서, 스캔 후 전체 사전계산(재스캔/자동
+        # 재스캔)과 같은 전역 락을 공유한다 - 그래야 "재스캔의 커버 생성이 아직
+        # 진행 중인데 이 폴더의 겹침 계산이 겹쳐서 시작"되는 것도 막힌다.
+        asyncio.create_task(
+            services._run_precompute(lambda: services.precompute_one_cover_with_timeout(series_entry))
+        )
     log.info(f"시리즈 폴더 다시 포함: {body.platform}/{body.series}")
     return {"ok": True}

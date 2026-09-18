@@ -26,6 +26,16 @@ BACKUP_VERSION = 2  # v2부터 read_chapters(회차별 명시 읽음 기록) 포
 
 SERIES_SCAN_TIMEOUT_SECONDS = int(os.environ.get("SERIES_SCAN_TIMEOUT_SECONDS", "30"))
 
+# SLOW_PLATFORMS(rclone 등 원격 마운트)는 콜드 리드 하나가 30초를 넘기는 일이 흔해서,
+# 로컬과 같은 타임아웃을 쓰면 "정말 멈춘 것"과 "그냥 좀 느린 것"을 구분 못 하고 항목
+# 하나 느리다는 이유로 그 플랫폼의 남은 스캔을 전부 포기해버리는 일이 잦아진다.
+# 원격 마운트에는 훨씬 넉넉한 시간을 따로 준다(필요하면 환경변수로 조정 가능).
+SLOW_PLATFORM_SCAN_TIMEOUT_SECONDS = int(os.environ.get("SLOW_PLATFORM_SCAN_TIMEOUT_SECONDS", "120"))
+
+
+def _scan_timeout_for(platform: str) -> int:
+    return SLOW_PLATFORM_SCAN_TIMEOUT_SECONDS if scan.is_slow_platform(platform) else SERIES_SCAN_TIMEOUT_SECONDS
+
 # SLOW_PLATFORMS(네트워크 드라이브)로 지정된 플랫폼의 파일 I/O는 이 전용 스레드풀로만
 # 보낸다. asyncio.to_thread()가 쓰는 기본 스레드풀은 앱 전체가 공유하는 자원이라, 응답
 # 없는 네트워크 호출 하나가 스레드를 계속 붙잡고 있으면(타임아웃으로 "기다리는 걸
@@ -127,17 +137,18 @@ async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
     for platform in platforms:
         gen = scan.iter_platform_series_streaming(platform)
         seen_ids = set()
-        seen_refs = []
+        seen_refs = set()
         completed = False
+        item_timeout = _scan_timeout_for(platform)
         while True:
             try:
                 item = await asyncio.wait_for(
                     run_platform_io(platform, _advance_generator, gen),
-                    timeout=SERIES_SCAN_TIMEOUT_SECONDS,
+                    timeout=item_timeout,
                 )
             except asyncio.TimeoutError:
                 log.warning(
-                    f"'{platform}' 탐색 중 한 항목이 {SERIES_SCAN_TIMEOUT_SECONDS}초를 넘겨 "
+                    f"'{platform}' 탐색 중 한 항목이 {item_timeout}초를 넘겨 "
                     f"이번 스캔은 여기서 중단 (마운트 상태 확인 필요, 다음 재스캔에서 처음부터 재시도됨)"
                 )
                 break
@@ -148,36 +159,55 @@ async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
                 completed = True  # 이 플랫폼은 끝까지 다 훑었음(중단이 아니라)
                 break
             series_ref, series_entry, chapters_map = item
-            seen_refs.append(series_ref)  # 발견된 폴더 전부 기록(설정 패널의 폴더 목록용)
-            catalog.set_platform_folder_refs(platform, list(seen_refs))
+            seen_refs.add(series_ref)  # 이번 스캔에서 발견된 폴더 기록(완주 시 정리용)
+            catalog.add_platform_folder_ref(platform, series_ref)  # 목록엔 추가만(교체 아님)
             if series_entry:  # 실제로 스캔에 성공한 경우만 카탈로그에 반영(제외된 폴더도 포함됨 -
                 # "제외"는 이제 스캔 자체를 막는 게 아니라 excluded 플래그만 남기고, 관리자
                 # 메인 목록(list_series)에서 그 플래그를 보고 걸러내는 방식으로 바뀌었다)
                 catalog.add_series(series_entry, chapters_map)
                 seen_ids.add(series_entry["id"])
 
-        # 이번 스캔에서 다시 나타나지 않은(삭제되었거나 새로 제외된) 기존 시리즈는 정리.
-        # 중간에 타임아웃/오류로 멈췄다면 seen_ids가 이번에 실제로 확인된 것까지만 담고
-        # 있어서, 아직 못 훑은 뒷부분의 기존 시리즈까지 정리해버리면 안 되므로, 끝까지
-        # 완주했을 때만(completed) 안전하게 정리한다.
+        # 이번 스캔에서 다시 나타나지 않은(삭제되었거나 새로 제외된) 기존 시리즈/폴더
+        # 목록은 정리. 중간에 타임아웃/오류로 멈췄다면 seen_ids/seen_refs가 이번에
+        # 실제로 확인된 것까지만 담고 있어서, 아직 못 훑은 뒷부분까지 정리해버리면
+        # 안 되므로, 끝까지 완주했을 때만(completed) 안전하게 정리한다.
         if completed:
             catalog.prune_platform_series(platform, seen_ids)
+            catalog.prune_platform_folder_refs(platform, seen_refs)
         log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(seen_ids)}개, 폴더 발견 즉시 반영됨)")
     return catalog.get_series_map(), catalog.get_chapters_map()
 
 
-async def _precompute_after_scan() -> None:
-    """겹침 계산(overlap, OpenCV)과 커버 생성(Pillow)을 순서대로 실행한다.
+_global_precompute_lock = asyncio.Lock()
 
-    예전에는 asyncio.create_task()로 이 둘을 동시에 따로 띄웠는데, 그러면 서로 다른
-    스레드에서 OpenCV와 Pillow의 네이티브(C) 이미지 처리 코드가 동시에 실행될 수
-    있다. 이 두 라이브러리가 그런 동시 호출을 완전히 안전하게 보장하지는 않아서,
-    실제로 이 동시 실행 타이밍에 따라 간헐적으로(몇 초 만에, 또는 몇 시간 뒤에)
-    세그멘테이션 폴트로 프로세스 전체가 죽는 문제가 있었다 - 파이썬 예외가 아니라서
-    로그에 아무 흔적도 안 남고 조용히 종료됐다. 하나씩 순서대로 실행하면 이 동시
-    네이티브 호출 자체가 없어지므로 안전하다."""
-    await overlap.precompute_overlaps()
-    await precompute_covers()
+
+async def _run_precompute(cover_work) -> None:
+    """겹침 계산과 커버 생성(어떤 형태든)을 절대 동시에, 그리고 이전 세대의 사전계산이
+    아직 안 끝난 채로 다음 세대가 겹쳐 시작되지 않게 한다.
+
+    overlap.py/precompute_covers 각자의 자체 락은 "같은 종류"의 중복 실행(예: 커버
+    생성이 이미 돌고 있는데 커버 생성이 또 시작되는 것)만 막아준다. 하지만
+    RESCAN_INTERVAL_SECONDS가 짧고 라이브러리가 크거나 rclone 같은 원격 마운트라
+    한 번의 사전계산이 그 주기보다 오래 걸리면, "이전 재스캔의 커버 생성(Pillow)이
+    아직 끝나기 전에 다음 재스캔의 겹침 계산(OpenCV)이 시작"되는 경우가 생긴다 -
+    이러면 서로 다른 스레드에서 네이티브 이미지 처리 코드가 동시에 실행되는 것과
+    똑같아서 세그폴트가 날 수 있다(실제로 이 문제로 배포 환경에서 몇 시간 뒤에
+    크래시가 반복됐다).
+
+    그래서 이 함수를 거치는 모든 사전계산(스캔 후 전체, 폴더 재포함 시 개별 커버)이
+    이 모듈 전체에 걸친 단 하나의 락을 공유하게 해서, "지금 뭐든 사전계산이 진행
+    중이면 새로 시작하지 않고 조용히 건너뛴다"로 확실하게 막는다 - 건너뛰어도
+    다음 스캔 때 다시 시도되므로 실질적으로 누락되지 않는다."""
+    if _global_precompute_lock.locked():
+        return
+    async with _global_precompute_lock:
+        await overlap.precompute_overlaps()
+        await cover_work()
+
+
+async def _precompute_after_scan() -> None:
+    """겹침 계산(overlap, OpenCV)과 커버 생성(Pillow)을 순서대로 실행한다."""
+    await _run_precompute(precompute_covers)
 
 
 async def initial_scan() -> None:
@@ -254,10 +284,11 @@ _cover_precompute_lock = asyncio.Lock()
 async def precompute_one_cover_with_timeout(series: dict) -> None:
     """폴더 재포함 등으로 시리즈 하나만 커버를 미리 만들 때 쓴다. create_task로 띄우는
     독립 작업이라 타임아웃 없이 멈춰버리면 그 스레드가 계속 남게 되므로 시간 제한을 둔다."""
+    timeout = _scan_timeout_for(series["platform"])
     try:
-        await asyncio.wait_for(ensure_cover_cached(series), timeout=SERIES_SCAN_TIMEOUT_SECONDS)
+        await asyncio.wait_for(ensure_cover_cached(series), timeout=timeout)
     except asyncio.TimeoutError:
-        log.warning(f"커버 사전 생성이 {SERIES_SCAN_TIMEOUT_SECONDS}초를 넘겨 건너뜀: {series['id']} ({series['title']})")
+        log.warning(f"커버 사전 생성이 {timeout}초를 넘겨 건너뜀: {series['id']} ({series['title']})")
     except Exception:
         log.exception(f"커버 사전 생성 실패: {series['id']}")
 
@@ -279,18 +310,17 @@ async def precompute_covers() -> None:
             return
         generated = 0
         for series in series_list:
+            timeout = _scan_timeout_for(series["platform"])
             try:
                 # 응답 없는 네트워크 파일 하나 때문에 이 작업 전체가 멈춰버리면 안 된다 -
                 # 멈추면 이 lock을 영원히 붙잡고 있게 되어, 그 다음부터는 재스캔을 아무리
                 # 해도 사전 생성 자체가 조용히 아무 일도 안 하게 되는 심각한 문제가 있었다.
-                result = await asyncio.wait_for(
-                    ensure_cover_cached(series), timeout=SERIES_SCAN_TIMEOUT_SECONDS
-                )
+                result = await asyncio.wait_for(ensure_cover_cached(series), timeout=timeout)
                 if result is not None:
                     generated += 1
             except asyncio.TimeoutError:
                 log.warning(
-                    f"커버 사전 생성이 {SERIES_SCAN_TIMEOUT_SECONDS}초를 넘겨 건너뜀: "
+                    f"커버 사전 생성이 {timeout}초를 넘겨 건너뜀: "
                     f"{series['id']} ({series['title']}) - 다음 재스캔에서 다시 시도됨"
                 )
             except Exception:

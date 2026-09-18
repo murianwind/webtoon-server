@@ -82,10 +82,30 @@ def add_series(series_entry: dict, chapters_map: dict) -> None:
     _state["last_scan_at"] = datetime.now()
 
 
-def set_platform_folder_refs(platform: str, folder_refs: list[str]) -> None:
-    """설정 패널의 폴더 목록 캐시만 갱신한다(시리즈 스캔 결과와는 별개로, 시리즈를
-    하나씩 스캔하기 전에 "이 플랫폼에 이런 폴더들이 있다"를 먼저 반영해두기 위함)."""
-    _state["folder_refs"][platform] = folder_refs
+def add_platform_folder_ref(platform: str, series_ref: str) -> None:
+    """설정 패널의 폴더 목록에 새로 발견된 폴더 하나를 추가한다(교체가 아니라 추가).
+
+    예전에는 스캔 중 폴더를 하나 발견할 때마다 "지금까지 이번 스캔에서 본 것만"으로
+    이 플랫폼의 전체 목록을 통째로 교체했다 - 그러면 스캔이 시작된 순간부터 끝날
+    때까지, 이미 알고 있던(이전 스캔에서 발견된) 폴더들이 화면에서 일시적으로
+    사라졌다가 스캔이 진행되면서 서서히 다시 나타났다. 게다가 느린 원격 마운트 등
+    때문에 스캔이 중간에 타임아웃/오류로 멈추면, 그 시점까지 발견된 폴더만 남고
+    나머지는 다음 스캔이 성공하기 전까지 계속 "제외 목록"에서도, "포함 목록"에서도
+    보이지 않아 아예 손을 댈 수 없는 상태가 됐다. 그래서 이제는 발견되는 즉시
+    "추가"만 하고, 정말로 사라진 폴더 정리(prune_platform_folder_refs)는 스캔이
+    끝까지 완주했을 때만 별도로 한다."""
+    refs = _state["folder_refs"].setdefault(platform, [])
+    if series_ref not in refs:
+        refs.append(series_ref)
+
+
+def prune_platform_folder_refs(platform: str, seen_refs: set[str]) -> None:
+    """스캔이 끝까지 완주했을 때만 호출해야 한다 - 이번 스캔에서 다시 발견되지 않은
+    (폴더가 실제로 삭제된) 것만 폴더 목록에서 정리한다. prune_platform_series와
+    똑같은 안전 원칙: 중간에 멈춘 스캔의 결과로는 절대 호출하면 안 된다(아직 못
+    훑은 뒷부분의 폴더까지 "사라졌다"고 오판해서 지워버리게 되므로)."""
+    existing = _state["folder_refs"].get(platform, [])
+    _state["folder_refs"][platform] = [ref for ref in existing if ref in seen_refs]
 
 
 def prune_platform_series(platform: str, keep_ids: set[str]) -> None:

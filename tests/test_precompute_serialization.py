@@ -61,3 +61,40 @@ def test_precompute_after_scan_runs_overlap_before_covers(library):
     """THEN 겹침 계산이 먼저, 커버 생성이 그다음 순서로 실행된다"""
     assert order == ["overlap", "covers"]
 
+
+def test_next_generation_skips_while_previous_generation_still_running(library):
+    """GIVEN 이전 세대(재스캔1)의 사전계산이 아직 끝나지 않았을 때(느린 원격 마운트 등으로
+    한 번의 사전계산이 재스캔 주기보다 오래 걸리는 상황을 흉내냄)"""
+    concurrently_active = 0
+    max_concurrent = 0
+
+    async def slow_overlap():
+        nonlocal concurrently_active, max_concurrent
+        concurrently_active += 1
+        max_concurrent = max(max_concurrent, concurrently_active)
+        await asyncio.sleep(0.1)
+        concurrently_active -= 1
+
+    async def slow_covers():
+        nonlocal concurrently_active, max_concurrent
+        concurrently_active += 1
+        max_concurrent = max(max_concurrent, concurrently_active)
+        await asyncio.sleep(0.1)
+        concurrently_active -= 1
+
+    async def run_two_overlapping_generations():
+        with patch("app.services.overlap.precompute_overlaps", slow_overlap), patch(
+            "app.services.precompute_covers", slow_covers
+        ):
+            """WHEN 세대1이 끝나기 전에(사전계산 중간에) 세대2가 재스캔으로 또 시작되면"""
+            task1 = asyncio.create_task(services._precompute_after_scan())
+            await asyncio.sleep(0.02)  # 세대1이 overlap 단계를 지나 covers 단계에 들어갈 시간을 줌
+            task2 = asyncio.create_task(services._precompute_after_scan())
+            await asyncio.gather(task1, task2)
+
+    asyncio.run(run_two_overlapping_generations())
+
+    """THEN 세대2는 락이 걸려있는 걸 보고 조용히 건너뛰어서, 실제 동시 실행 인원은
+    항상 1을 넘지 않는다(겹치는 순간이 전혀 없었다는 뜻)"""
+    assert max_concurrent == 1
+
