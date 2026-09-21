@@ -22,7 +22,8 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # 라이브러리 자동 재스캔 주기(초). 기본 2시간. 0 이하로 설정하면 자동 재스캔을 끈다.
 RESCAN_INTERVAL_SECONDS = int(os.environ.get("RESCAN_INTERVAL_SECONDS", "7200"))
 
-BACKUP_VERSION = 2  # v2부터 read_chapters(회차별 명시 읽음 기록) 포함
+BACKUP_VERSION = 3  # v2부터 read_chapters, v3부터 공유 프로필 전체(프로필/허용목록/
+# 진행률/설정/시간대/요청내역) 포함
 
 SERIES_SCAN_TIMEOUT_SECONDS = int(os.environ.get("SERIES_SCAN_TIMEOUT_SECONDS", "30"))
 

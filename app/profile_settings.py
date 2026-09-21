@@ -47,3 +47,29 @@ def set_setting(profile_id: str, key: str, value: str) -> None:
             (profile_id, key, value),
         )
         conn.commit()
+
+
+def export_all() -> list[dict]:
+    """백업용 - 모든 프로필의 검색/정렬/필터 설정을 전부 내보낸다."""
+    init_schema()
+    with db.db_connection() as conn:
+        rows = conn.execute("SELECT profile_id, key, value FROM profile_settings").fetchall()
+    return [{"profile_id": r[0], "key": r[1], "value": r[2]} for r in rows]
+
+
+def import_all(rows: list) -> int:
+    """기존 프로필 설정을 전부 지우고 백업 내용으로 교체한다. 반환값은 복원된 건수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM profile_settings")
+        count = 0
+        for row in rows:
+            if not all(k in row for k in ("profile_id", "key", "value")):
+                continue
+            conn.execute(
+                "INSERT INTO profile_settings (profile_id, key, value) VALUES (?, ?, ?)",
+                (row["profile_id"], row["key"], row["value"]),
+            )
+            count += 1
+        conn.commit()
+    return count

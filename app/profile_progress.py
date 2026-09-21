@@ -135,3 +135,62 @@ def delete_all_data_for_profile(profile_id: str) -> None:
         conn.execute("DELETE FROM profile_progress WHERE profile_id = ?", (profile_id,))
         conn.execute("DELETE FROM profile_read_chapters WHERE profile_id = ?", (profile_id,))
         conn.commit()
+
+
+def export_all() -> dict:
+    """백업용 - 모든 프로필의 이어보기 진행률 + 읽은 회차 기록을 전부 내보낸다."""
+    init_schema()
+    with db.db_connection() as conn:
+        progress_rows = conn.execute(
+            "SELECT profile_id, series_id, chapter_id, chapter_index, page_index, updated_at FROM profile_progress"
+        ).fetchall()
+        read_rows = conn.execute(
+            "SELECT profile_id, series_id, chapter_id FROM profile_read_chapters"
+        ).fetchall()
+    return {
+        "profile_progress": [
+            {
+                "profile_id": r[0], "series_id": r[1], "chapter_id": r[2],
+                "chapter_index": r[3], "page_index": r[4], "updated_at": r[5],
+            }
+            for r in progress_rows
+        ],
+        "profile_read_chapters": [
+            {"profile_id": r[0], "series_id": r[1], "chapter_id": r[2]} for r in read_rows
+        ],
+    }
+
+
+def import_all(progress_rows: list, read_chapter_rows: list) -> int:
+    """기존 프로필 진행률/읽음기록을 전부 지우고 백업 내용으로 교체한다. 반환값은
+    복원된 진행률 건수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM profile_progress")
+        conn.execute("DELETE FROM profile_read_chapters")
+
+        count = 0
+        for row in progress_rows:
+            if not all(k in row for k in ("profile_id", "series_id", "chapter_id", "chapter_index", "updated_at")):
+                continue
+            conn.execute(
+                """
+                INSERT INTO profile_progress
+                    (profile_id, series_id, chapter_id, chapter_index, page_index, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["profile_id"], row["series_id"], row["chapter_id"],
+                    row["chapter_index"], row.get("page_index", 0), row["updated_at"],
+                ),
+            )
+            count += 1
+        for row in read_chapter_rows:
+            if not all(k in row for k in ("profile_id", "series_id", "chapter_id")):
+                continue
+            conn.execute(
+                "INSERT INTO profile_read_chapters (profile_id, series_id, chapter_id) VALUES (?, ?, ?)",
+                (row["profile_id"], row["series_id"], row["chapter_id"]),
+            )
+        conn.commit()
+    return count

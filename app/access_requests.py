@@ -106,3 +106,31 @@ def clear_request_on_approval(profile_id: str, series_id: str) -> None:
             (profile_id, series_id),
         )
         conn.commit()
+
+
+def export_all() -> list[dict]:
+    """백업용 - 모든 프로필의 대기중/거부된 요청 내역을 전부 내보낸다."""
+    init_schema()
+    with db.db_connection() as conn:
+        rows = conn.execute(
+            "SELECT profile_id, series_id, status, requested_at FROM access_requests"
+        ).fetchall()
+    return [{"profile_id": r[0], "series_id": r[1], "status": r[2], "requested_at": r[3]} for r in rows]
+
+
+def import_all(rows: list) -> int:
+    """기존 요청 내역을 전부 지우고 백업 내용으로 교체한다. 반환값은 복원된 건수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM access_requests")
+        count = 0
+        for row in rows:
+            if not all(k in row for k in ("profile_id", "series_id", "status", "requested_at")):
+                continue
+            conn.execute(
+                "INSERT INTO access_requests (profile_id, series_id, status, requested_at) VALUES (?, ?, ?, ?)",
+                (row["profile_id"], row["series_id"], row["status"], row["requested_at"]),
+            )
+            count += 1
+        conn.commit()
+    return count

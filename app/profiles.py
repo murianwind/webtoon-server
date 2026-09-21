@@ -171,3 +171,60 @@ def series_matches_browse_filters(series: dict, profile_id: str) -> bool:
     info = series.get("info") or {}
     age_rating = info.get("age_rating") or NO_AGE_RATING
     return (series["platform"], age_rating) in get_browse_filters(profile_id)
+
+
+def export_all() -> dict:
+    """백업용 - 프로필 자체(이름/토큰) + 허용 시리즈 + 둘러보기 필터를 전부 내보낸다.
+    PROFILES_ENABLED가 꺼져있어 테이블이 아직 없을 수도 있으니, 먼저 스키마를
+    보장해둔다(CREATE TABLE IF NOT EXISTS라 안전하게 반복 호출 가능)."""
+    init_schema()
+    with db.db_connection() as conn:
+        profile_rows = conn.execute("SELECT id, name, token, created_at FROM profiles").fetchall()
+        filter_rows = conn.execute(
+            "SELECT profile_id, platform, age_rating FROM profile_browse_filters"
+        ).fetchall()
+        allowed_rows = conn.execute("SELECT profile_id, series_id FROM profile_allowed_series").fetchall()
+    return {
+        "profiles": [{"id": r[0], "name": r[1], "token": r[2], "created_at": r[3]} for r in profile_rows],
+        "profile_browse_filters": [
+            {"profile_id": r[0], "platform": r[1], "age_rating": r[2]} for r in filter_rows
+        ],
+        "profile_allowed_series": [{"profile_id": r[0], "series_id": r[1]} for r in allowed_rows],
+    }
+
+
+def import_all(profile_rows: list, filter_rows: list, allowed_rows: list) -> int:
+    """기존 프로필 관련 데이터를 전부 지우고 백업 내용으로 교체한다. 프로필 자체를
+    통째로 교체해야 토큰(공유 링크)까지 원래 그대로 복원된다 - 그래야 가족들한테
+    나눠준 링크가 복원 후에도 그대로 유지된다. 반환값은 복원된 프로필 수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM profile_allowed_series")
+        conn.execute("DELETE FROM profile_browse_filters")
+        conn.execute("DELETE FROM profiles")
+
+        count = 0
+        for row in profile_rows:
+            if not all(k in row for k in ("id", "name", "token", "created_at")):
+                continue
+            conn.execute(
+                "INSERT INTO profiles (id, name, token, created_at) VALUES (?, ?, ?, ?)",
+                (row["id"], row["name"], row["token"], row["created_at"]),
+            )
+            count += 1
+        for row in filter_rows:
+            if not all(k in row for k in ("profile_id", "platform", "age_rating")):
+                continue
+            conn.execute(
+                "INSERT INTO profile_browse_filters (profile_id, platform, age_rating) VALUES (?, ?, ?)",
+                (row["profile_id"], row["platform"], row["age_rating"]),
+            )
+        for row in allowed_rows:
+            if not all(k in row for k in ("profile_id", "series_id")):
+                continue
+            conn.execute(
+                "INSERT INTO profile_allowed_series (profile_id, series_id) VALUES (?, ?)",
+                (row["profile_id"], row["series_id"]),
+            )
+        conn.commit()
+    return count

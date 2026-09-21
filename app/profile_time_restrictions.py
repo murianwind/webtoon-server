@@ -68,3 +68,31 @@ def is_within_allowed_time(profile_id: str, now: datetime | None = None) -> bool
         w["day_of_week"] == day_of_week and w["start_minute"] <= minute_of_day <= w["end_minute"]
         for w in windows
     )
+
+
+def export_all() -> list[dict]:
+    """백업용 - 모든 프로필의 접속 가능 시간대 설정을 전부 내보낸다."""
+    init_schema()
+    with db.db_connection() as conn:
+        rows = conn.execute(
+            "SELECT profile_id, day_of_week, start_minute, end_minute FROM profile_time_windows"
+        ).fetchall()
+    return [{"profile_id": r[0], "day_of_week": r[1], "start_minute": r[2], "end_minute": r[3]} for r in rows]
+
+
+def import_all(rows: list) -> int:
+    """기존 프로필 시간대 설정을 전부 지우고 백업 내용으로 교체한다. 반환값은 복원된 건수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM profile_time_windows")
+        count = 0
+        for row in rows:
+            if not all(k in row for k in ("profile_id", "day_of_week", "start_minute", "end_minute")):
+                continue
+            conn.execute(
+                "INSERT INTO profile_time_windows (profile_id, day_of_week, start_minute, end_minute) VALUES (?, ?, ?, ?)",
+                (row["profile_id"], row["day_of_week"], row["start_minute"], row["end_minute"]),
+            )
+            count += 1
+        conn.commit()
+    return count
