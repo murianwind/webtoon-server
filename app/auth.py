@@ -175,3 +175,36 @@ def remove_remembered_device(device_id: str) -> None:
     with db.db_connection() as conn:
         conn.execute("DELETE FROM remembered_devices WHERE device_id = ?", (device_id,))
         conn.commit()
+
+
+def export_remembered_devices() -> list[dict]:
+    """백업용 - 관리자 비밀번호(admin_auth)는 재시작마다 새로 만드는 설계라 절대
+    백업에 포함하지 않지만, 기억된 기기 목록은 포함한다 - 같은 배포를 DB만 복구하는
+    상황이라면 관리자 본인이 다시 로그인하지 않아도 되게 해준다."""
+    init_schema()
+    with db.db_connection() as conn:
+        rows = conn.execute(
+            "SELECT device_id, label, created_at, last_seen_at FROM remembered_devices"
+        ).fetchall()
+    return [{"device_id": r[0], "label": r[1], "created_at": r[2], "last_seen_at": r[3]} for r in rows]
+
+
+def import_remembered_devices(rows: list) -> int:
+    """기존 기억된 기기를 전부 지우고 백업 내용으로 교체한다. 반환값은 복원된 건수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM remembered_devices")
+        count = 0
+        for row in rows:
+            if not all(k in row for k in ("device_id", "label", "created_at", "last_seen_at")):
+                continue
+            conn.execute(
+                """
+                INSERT INTO remembered_devices (device_id, label, created_at, last_seen_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (row["device_id"], row["label"], row["created_at"], row["last_seen_at"]),
+            )
+            count += 1
+        conn.commit()
+    return count

@@ -186,3 +186,68 @@ def delete_all_data_for_profile(profile_id: str) -> None:
         conn.execute("DELETE FROM profile_devices WHERE profile_id = ?", (profile_id,))
         conn.execute("DELETE FROM profile_device_requests WHERE profile_id = ?", (profile_id,))
         conn.commit()
+
+
+def export_all() -> dict:
+    """백업용 - 등록된 기기 + 대기중인 승인 요청을 전부 내보낸다.
+
+    이건 "같은 배포를 DB만 복구"하는 상황(재설치, DB 파일 손상 등)에서만 의미가
+    있다 - device_id는 브라우저에 심어진 쿠키 값이라, 다른 서버/다른 브라우저로
+    복원하면 이 값과 실제로 일치하는 쿠키가 없어서 그냥 남는 기록이 된다. 그래도
+    같은 배포를 복구하는 흔한 경우에는, 이미 승인받은 가족들이 다시 승인 절차를
+    거치지 않아도 되게 해준다."""
+    init_schema()
+    with db.db_connection() as conn:
+        device_rows = conn.execute(
+            "SELECT profile_id, device_id, label, created_at, last_seen_at FROM profile_devices"
+        ).fetchall()
+        request_rows = conn.execute(
+            "SELECT profile_id, device_id, label, requested_at FROM profile_device_requests"
+        ).fetchall()
+    return {
+        "profile_devices": [
+            {
+                "profile_id": r[0], "device_id": r[1], "label": r[2],
+                "created_at": r[3], "last_seen_at": r[4],
+            }
+            for r in device_rows
+        ],
+        "profile_device_requests": [
+            {"profile_id": r[0], "device_id": r[1], "label": r[2], "requested_at": r[3]}
+            for r in request_rows
+        ],
+    }
+
+
+def import_all(device_rows: list, request_rows: list) -> int:
+    """기존 기기 등록/대기요청을 전부 지우고 백업 내용으로 교체한다. 반환값은
+    복원된 기기 등록 건수."""
+    init_schema()
+    with db.db_connection() as conn:
+        conn.execute("DELETE FROM profile_devices")
+        conn.execute("DELETE FROM profile_device_requests")
+
+        count = 0
+        for row in device_rows:
+            if not all(k in row for k in ("profile_id", "device_id", "label", "created_at", "last_seen_at")):
+                continue
+            conn.execute(
+                """
+                INSERT INTO profile_devices (profile_id, device_id, label, created_at, last_seen_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (row["profile_id"], row["device_id"], row["label"], row["created_at"], row["last_seen_at"]),
+            )
+            count += 1
+        for row in request_rows:
+            if not all(k in row for k in ("profile_id", "device_id", "label", "requested_at")):
+                continue
+            conn.execute(
+                """
+                INSERT INTO profile_device_requests (profile_id, device_id, label, requested_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (row["profile_id"], row["device_id"], row["label"], row["requested_at"]),
+            )
+        conn.commit()
+    return count

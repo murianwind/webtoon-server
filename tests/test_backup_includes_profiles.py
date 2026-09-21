@@ -138,3 +138,39 @@ def test_export_import_helpers_work_even_when_tables_were_never_created(library,
     assert profile_settings.export_all() == []
     assert profile_time_restrictions.export_all() == []
     assert access_requests.export_all() == []
+
+
+def test_backup_includes_admin_and_profile_devices(admin_client_with_profile_data):
+    """GIVEN 관리자가 로그인해서 기억된 기기가 있고, 프로필 쪽에도 접속 기기가 등록된 상태일 때"""
+    ctx = admin_client_with_profile_data
+    client = ctx["client"]
+    client.get(f"/p/{ctx['original_token']}/api/series")  # 프로필 기기 1대 자동 등록됨
+
+    """WHEN 백업을 받으면"""
+    backup = client.get("/api/backup").json()
+
+    """THEN 관리자의 기억된 기기와 프로필의 등록 기기가 둘 다 포함된다"""
+    assert len(backup["remembered_devices"]) >= 1
+    assert len(backup["profile_devices"]) >= 1
+
+
+def test_restore_brings_back_devices_so_no_reapproval_needed(admin_client_with_profile_data):
+    """GIVEN 관리자 기기 1대, 프로필 기기 1대가 등록된 상태에서 백업을 받아둔 뒤"""
+    ctx = admin_client_with_profile_data
+    client = ctx["client"]
+    client.get(f"/p/{ctx['original_token']}/api/series")
+
+    backup = client.get("/api/backup").json()
+    admin_devices_before = len(backup["remembered_devices"])
+    profile_devices_before = len(backup["profile_devices"])
+    assert admin_devices_before >= 1
+    assert profile_devices_before >= 1
+
+    """WHEN 그 백업으로 복원하면(같은 내용을 다시 써도 안전해야 함)"""
+    r = client.post("/api/restore", json=backup)
+    assert r.status_code == 200
+    body = r.json()
+
+    """THEN 관리자/프로필 기기 등록 건수가 백업에 있던 그대로 복원된다(다시 승인받을 필요 없음)"""
+    assert body["remembered_devices_count"] == admin_devices_before
+    assert body["profile_devices_count"] == profile_devices_before
