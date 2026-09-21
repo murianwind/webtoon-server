@@ -86,3 +86,32 @@ def test_overlap_stops_at_the_point_sequence_breaks(tmp_path):
 
     """THEN 정확히 2페이지에서 멈춘다(그 뒤 무관한 내용까지 잘못 포함하지 않음)"""
     assert result == 2
+
+
+def test_precompute_overlaps_collects_garbage_periodically(library, monkeypatch):
+    """GIVEN 배치 크기를 일부러 작게(3건마다) 줄여두고, 겹침이 캐싱 안 된 화 전환이
+    7건(=2번은 꽉 채운 배치, 1번은 덜 채운 배치) 있을 때"""
+    import asyncio as _asyncio
+    from unittest.mock import patch
+
+    from conftest import make_chapter_zip
+
+    monkeypatch.setattr(overlap, "_GC_BATCH_SIZE", 3)
+
+    for i in range(8):  # 8개 회차 = 화 전환 7건
+        make_chapter_zip(str(library / "naver" / "긴웹툰" / f"{i:03d}.zip"))
+
+    from app.main import app as _app
+    from fastapi.testclient import TestClient
+
+    with TestClient(_app) as client:
+        client.post("/api/rescan")
+
+    gc_calls = []
+    with patch("app.overlap.gc.collect", side_effect=lambda: gc_calls.append(1)):
+        _asyncio.run(overlap.precompute_overlaps())
+
+    """THEN 정확히 7건을 3건씩 나눠 처리했을 때 나오는 횟수(2번, 3의 배수 지점마다)만큼
+    가비지 컬렉션이 호출된다 - 오래 걸리는 계산일수록 주기적으로 메모리를 정리해야
+    네이티브 라이브러리 쪽 누적 위험이 줄어든다"""
+    assert len(gc_calls) == 2  # computed가 3, 6일 때 호출됨(7건 중)

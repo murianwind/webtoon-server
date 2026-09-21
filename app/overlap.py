@@ -15,6 +15,7 @@
 """
 
 import asyncio
+import gc
 import io
 import logging
 import zipfile
@@ -37,6 +38,13 @@ OVERLAP_POSITION_TOLERANCE_RATIO = 0.05  # 페이지 높이의 5%까지는 위�
 OVERLAP_MIN_RUN = 2  # 최소 이 개수 이상 연속으로 이어져야 겹침으로 인정(우연한 오탐 방지)
 OVERLAP_MAX_CHECK = 10  # 다음 화 맨 앞에서 최대 몇 장까지 검사할지
 OVERLAP_TAIL_PAGES = 15  # 이전 화 끝에서 몇 장을 검색 대상으로 삼을지
+
+# 라이브러리가 크면(수천 건) 한 번의 사전계산이 몇십 분~몇 시간씩 이어질 수 있는데, 그
+# 안에서 OpenCV/Pillow가 만드는 이미지 객체들이 파이썬 레벨에서는 정상적으로 해제돼도
+# 네이티브(C) 라이브러리 내부에 조금씩 메모리가 쌓이는 경우가 있다. 이 값 개수만큼
+# 처리할 때마다 한 박자 쉬면서 가비지 컬렉션을 강제로 돌려서, 오래 걸리는 계산일수록
+# 메모리가 무한정 누적되는 위험을 줄인다.
+_GC_BATCH_SIZE = 200
 
 _precompute_lock = asyncio.Lock()
 
@@ -145,6 +153,13 @@ async def precompute_overlaps() -> None:
                     found_overlaps += 1
             except Exception:
                 log.exception(f"겹침 사전 계산 실패 (건너뛰고 계속): {next_chapter['id']}")
+            if computed % _GC_BATCH_SIZE == 0:
+                # 오래 걸리는 계산(수천 건)일수록 네이티브 라이브러리 쪽에 메모리가
+                # 조금씩 쌓일 위험이 커진다 - 주기적으로 강제 회수해서 그 위험을 줄인다.
+                # await로 한 박자 쉬어주는 것도 겸해서, 이 계산이 너무 오래 다른 요청을
+                # 굶기지 않게 한다(원래도 asyncio.to_thread라 완전히 막지는 않지만).
+                gc.collect()
+                await asyncio.sleep(0)
         log.info(
             f"화 전환 겹침 사전 계산 완료 - {computed}/{len(pending)}건 처리, "
             f"그중 겹침 발견 {found_overlaps}건"
