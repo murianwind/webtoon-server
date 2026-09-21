@@ -1,5 +1,5 @@
 """
-화 전환 겹침(리캡) 감지 회귀 테스트. 실제 서로 다른 세션에서 압축된 것처럼 매칭 점수가
+회차 겹침(리캡) 감지 회귀 테스트. 실제 서로 다른 세션에서 압축된 것처럼 매칭 점수가
 페이지마다 들쭉날쭉해도, "위치가 순차적으로 이어지는지"로 정확히 판단해야 한다.
 
 테스트 이미지는 일부러 단색이 아니라 그라디언트+도형을 넣어서 진짜 사진/일러스트에
@@ -89,7 +89,7 @@ def test_overlap_stops_at_the_point_sequence_breaks(tmp_path):
 
 
 def test_precompute_overlaps_collects_garbage_periodically(library, monkeypatch):
-    """GIVEN 배치 크기를 일부러 작게(3건마다) 줄여두고, 겹침이 캐싱 안 된 화 전환이
+    """GIVEN 배치 크기를 일부러 작게(3건마다) 줄여두고, 겹침이 캐싱 안 된 회차 전환이
     7건(=2번은 꽉 채운 배치, 1번은 덜 채운 배치) 있을 때"""
     import asyncio as _asyncio
     from unittest.mock import patch
@@ -98,7 +98,7 @@ def test_precompute_overlaps_collects_garbage_periodically(library, monkeypatch)
 
     monkeypatch.setattr(overlap, "_GC_BATCH_SIZE", 3)
 
-    for i in range(8):  # 8개 회차 = 화 전환 7건
+    for i in range(8):  # 8개 회차 = 회차 전환 7건
         make_chapter_zip(str(library / "naver" / "긴웹툰" / f"{i:03d}.zip"))
 
     from app.main import app as _app
@@ -127,7 +127,7 @@ def test_precompute_overlaps_stops_midway_when_setting_turned_off(library, monke
 
     monkeypatch.setattr(overlap, "_SETTING_CHECK_BATCH_SIZE", 2)
 
-    for i in range(6):  # 6개 회차 = 화 전환 5건
+    for i in range(6):  # 6개 회차 = 회차 전환 5건
         make_chapter_zip(str(library / "naver" / "중단테스트" / f"{i:03d}.zip"))
 
     from app.main import app as _app
@@ -227,7 +227,7 @@ def test_off_setting_does_not_block_cover_precompute_in_same_generation(library,
 
 
 def test_realtime_endpoint_works_right_after_a_midway_stop(client, library, monkeypatch):
-    """GIVEN 겹침 사전계산이 도중에 멈춰서 일부 화 전환은 아직 캐시가 없을 때"""
+    """GIVEN 겹침 사전계산이 도중에 멈춰서 일부 회차 전환은 아직 캐시가 없을 때"""
     from conftest import make_chapter_zip
 
     monkeypatch.setattr(overlap, "_SETTING_CHECK_BATCH_SIZE", 1)
@@ -245,7 +245,7 @@ def test_realtime_endpoint_works_right_after_a_midway_stop(client, library, monk
     series_id = client.get("/api/series").json()[0]["id"]
     chapters = client.get(f"/api/series/{series_id}/chapters").json()["chapters"]
 
-    """WHEN 아직 캐시가 없을 수 있는 화 전환의 겹침 정보를 실시간 API로 조회하면"""
+    """WHEN 아직 캐시가 없을 수 있는 회차 전환의 겹침 정보를 실시간 API로 조회하면"""
     for ch in chapters[1:]:
         r = client.get(f"/api/chapters/{ch['id']}/overlap")
         """THEN 사전계산 설정 상태와 무관하게 전부 정상 응답한다"""

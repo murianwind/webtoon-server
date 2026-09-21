@@ -1,5 +1,5 @@
 """
-화 전환 시 중복(리캡) 페이지 감지. 다음 화 맨 앞부분이 이전 화 끝부분과 픽셀 단위로
+회차 간 중복(리캡) 페이지 감지. 다음 화 맨 앞부분이 이전 화 끝부분과 픽셀 단위로
 겹치는지 이미지 매칭(OpenCV 템플릿 매칭)으로 확인하고, 겹치는 페이지 수를 계산해 캐싱한다.
 
 판단 기준: 처음에는 "매칭 점수가 0.9 이상이면 겹침"이라는 단일 기준을 썼는데, 서로 다른
@@ -126,7 +126,7 @@ def compute_overlap_pages(prev_zip_path: str, next_zip_path: str) -> int:
 
 async def precompute_overlaps() -> None:
     """
-    재스캔 직후 호출되는 백그라운드 작업. 아직 계산된 적 없는 화 전환(연속된 두 회차)만
+    재스캔 직후 호출되는 백그라운드 작업. 아직 계산된 적 없는 회차 전환(연속된 두 회차)만
     골라서 겹침을 미리 계산해 캐싱해둔다. 요청 처리를 막지 않도록 각 계산은 스레드로 돌리고,
     이미 실행 중이면 중복 실행하지 않는다.
     """
@@ -144,7 +144,7 @@ async def precompute_overlaps() -> None:
         if not pending:
             return
 
-        log.info(f"화 전환 겹침 사전 계산 시작 - {len(pending)}건")
+        log.info(f"회차 겹침 사전 계산 시작 - {len(pending)}건")
         computed = 0
         found_overlaps = 0
         for prev_chapter, next_chapter in pending:
@@ -154,7 +154,7 @@ async def precompute_overlaps() -> None:
                 # 이미 도는 중에 설정이 꺼졌으면, 다음 배치를 시작하지 않고 여기서
                 # 바로 멈춘다 - 지금까지 계산된 것만 캐시에 남고, 나머지는 그대로
                 # "아직 계산 안 됨" 상태로 남아 리더가 열 때 그 자리에서 계산된다.
-                log.info(f"화 전환 겹침 사전 계산 중단됨(설정 꺼짐) - {computed}/{len(pending)}건까지 처리")
+                log.info(f"회차 겹침 사전 계산 중단됨(설정 꺼짐) - {computed}/{len(pending)}건까지 처리")
                 return
             try:
                 log.info(
@@ -178,6 +178,6 @@ async def precompute_overlaps() -> None:
                 gc.collect()
                 await asyncio.sleep(0)
         log.info(
-            f"화 전환 겹침 사전 계산 완료 - {computed}/{len(pending)}건 처리, "
+            f"회차 겹침 사전 계산 완료 - {computed}/{len(pending)}건 처리, "
             f"그중 겹침 발견 {found_overlaps}건"
         )

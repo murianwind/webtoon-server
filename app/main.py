@@ -7,7 +7,7 @@ app/routers/*.py에 있고, 여러 라우터가 공유하는 백그라운드 작
 app/services.py에 있다:
   - routers/library.py   스캔 트리거 + 시리즈 폴더 제외/재포함
   - routers/series.py    시리즈 목록/조회, 이어보기, 진행률, 읽음 상태, 커버, info.xml
-  - routers/chapters.py  회차 페이지 서빙, 화 전환 겹침 감지
+  - routers/chapters.py  회차 페이지 서빙, 회차 겹침 감지
   - routers/settings.py  앱 설정 저장/조회
   - routers/backup.py    백업/복원
   - routers/auth.py      (PROFILES_ENABLED일 때만) 관리자 로그인 + 기억된 기기 관리
@@ -18,7 +18,7 @@ app/services.py에 있다:
                 (PROFILES_ENABLED일 때만 실질적으로 쓰이는 공유 프로필 기능)
   - catalog.py  스캔 결과를 담아두는 메모리 상태
   - scan.py     파일시스템 스캔 + 회차 라벨 파싱
-  - overlap.py  화 전환 겹침(리캡) 감지 알고리즘 + 백그라운드 사전계산
+  - overlap.py  회차 겹침(리캡) 감지 알고리즘 + 백그라운드 사전계산
   - covers.py   시리즈 커버 썸네일 생성/캐싱
 
 PROFILES_ENABLED(공유 프로필) 기능: 환경변수가 없거나 "true"가 아니면 완전히 비활성화되고,

@@ -1,5 +1,5 @@
 """
-zip 내부 이미지(페이지 수/개별 페이지 서빙) + 화 전환 겹침(리캡) 감지 라우트.
+zip 내부 이미지(페이지 수/개별 페이지 서빙) + 회차 겹침(리캡) 감지 라우트.
 
 회차 ID는 시리즈 ID와 달리 URL에 시리즈 정보가 안 드러나므로(그냥 불투명한 해시), 공유
 프로필이 허용 안 된 시리즈의 회차 ID를 알아내서 직접 찔러보는 걸 막으려면 여기서도
@@ -66,7 +66,7 @@ async def chapter_overlap(chapter_id: str, request: Request):
     skip_pages = await services.run_platform_io(platform, overlap.compute_overlap_pages, prev_chapter["path"], zip_path)
     db.set_cached_overlap(chapter_id, prev_chapter["id"], skip_pages)
     if skip_pages > 0:
-        log.info(f"화 전환 겹침 감지: {chapter_id} 앞부분 {skip_pages}페이지가 이전 화와 중복 (자동 건너뜀)")
+        log.info(f"회차 겹침 감지: {chapter_id} 앞부분 {skip_pages}페이지가 이전 화와 중복 (자동 건너뜀)")
     return {"skip_pages": skip_pages}
 
 

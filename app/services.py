@@ -204,7 +204,7 @@ async def _run_precompute(cover_work) -> None:
         if db.get_setting("overlap_precompute_enabled", "true") == "true":
             await overlap.precompute_overlaps()
         # 꺼져있어도 리더가 화를 열 때 실시간으로 그 자리에서 계산해서 캐싱하므로
-        # (GET /api/chapters/{id}/overlap) 화 전환 건너뛰기 기능 자체는 계속 정상
+        # (GET /api/chapters/{id}/overlap) 회차 겹침 건너뛰기 기능 자체는 계속 정상
         # 동작한다 - 이 설정은 순전히 "미리 계산해서 처음 열 때도 안 기다리게" 하는
         # 최적화만 끄는 것이다.
         await cover_work()
