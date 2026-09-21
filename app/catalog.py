@@ -13,11 +13,19 @@ _state = {"series": {}, "chapters": {}, "last_scan_at": None, "folder_refs": {},
 
 
 def get_series_map() -> dict:
-    return _state["series"]
+    """항상 얕은 복사본을 돌려준다 - 원본(_state["series"])을 그대로 내주면, 호출한
+    쪽이 이걸 순회하는 동안 백그라운드 스캔이 add_series/prune_platform_series로
+    같은 딕셔너리에 키를 추가/삭제해서 "RuntimeError: dictionary changed size
+    during iteration"이 나는 경쟁 상태가 실제로 있었다(스캔이 오래 걸리는 큰
+    라이브러리일수록 이 순간에 걸릴 확률이 커짐). 얕은 복사본이라 시리즈 딕셔너리
+    "안"의 내용을 바꿔도 원본에 그대로 반영되니, 이 복사는 순회 안전성만을 위한
+    것이고 다른 동작에는 영향이 없다."""
+    return dict(_state["series"])
 
 
 def get_chapters_map() -> dict:
-    return _state["chapters"]
+    """get_series_map()과 같은 이유로 얕은 복사본을 돌려준다."""
+    return dict(_state["chapters"])
 
 
 def get_platform_age_ratings() -> dict[str, set[str]]:
