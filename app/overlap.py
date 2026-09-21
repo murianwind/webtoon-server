@@ -157,6 +157,10 @@ async def precompute_overlaps() -> None:
                 log.info(f"화 전환 겹침 사전 계산 중단됨(설정 꺼짐) - {computed}/{len(pending)}건까지 처리")
                 return
             try:
+                log.info(
+                    f"겹침 계산 중 ({computed + 1}/{len(pending)}): "
+                    f"'{prev_chapter['label']}' -> '{next_chapter['label']}' (회차ID {next_chapter['id']})"
+                )
                 skip_pages = await asyncio.to_thread(
                     compute_overlap_pages, prev_chapter["path"], next_chapter["path"]
                 )
