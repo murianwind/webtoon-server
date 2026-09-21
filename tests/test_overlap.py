@@ -115,3 +115,40 @@ def test_precompute_overlaps_collects_garbage_periodically(library, monkeypatch)
     가비지 컬렉션이 호출된다 - 오래 걸리는 계산일수록 주기적으로 메모리를 정리해야
     네이티브 라이브러리 쪽 누적 위험이 줄어든다"""
     assert len(gc_calls) == 2  # computed가 3, 6일 때 호출됨(7건 중)
+
+
+def test_precompute_overlaps_stops_midway_when_setting_turned_off(library, monkeypatch):
+    """GIVEN 설정 확인 배치 크기를 작게(2건마다) 줄여두고, 처리 대상이 5건 있을 때"""
+    import asyncio as _asyncio
+
+    from app import db
+    from conftest import make_chapter_zip
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(overlap, "_SETTING_CHECK_BATCH_SIZE", 2)
+
+    for i in range(6):  # 6개 회차 = 화 전환 5건
+        make_chapter_zip(str(library / "naver" / "중단테스트" / f"{i:03d}.zip"))
+
+    from app.main import app as _app
+
+    with TestClient(_app) as client:
+        client.post("/api/rescan")
+
+    processed_so_far = {"n": 0}
+    original_compute = overlap.compute_overlap_pages
+
+    def fake_compute(prev_path, next_path):
+        processed_so_far["n"] += 1
+        if processed_so_far["n"] == 2:
+            # 2건째가 끝난 시점에 설정을 꺼서, 그다음 확인 시점에 멈추는지 본다
+            db.set_setting("overlap_precompute_enabled", "false")
+        return original_compute(prev_path, next_path)
+
+    """WHEN 도중에(2건 처리 후) 설정이 꺼지면"""
+    with monkeypatch.context() as m:
+        m.setattr(overlap, "compute_overlap_pages", fake_compute)
+        _asyncio.run(overlap.precompute_overlaps())
+
+    """THEN 5건을 다 처리하지 않고 중간에 멈춘다(꺼진 걸 감지한 시점 이후로는 처리 안 함)"""
+    assert processed_so_far["n"] < 5

@@ -46,6 +46,11 @@ OVERLAP_TAIL_PAGES = 15  # 이전 화 끝에서 몇 장을 검색 대상으로 �
 # 메모리가 무한정 누적되는 위험을 줄인다.
 _GC_BATCH_SIZE = 200
 
+# "이미 도는 중"인 사전계산을 설정으로 껐을 때 얼마나 빨리 반응해서 멈출지 - 너무
+# 자주 확인하면 DB 조회가 잦아지고, 너무 뜸하면 꺼도 한참 더 돈다. 200건 단위인
+# 메모리 정리보다는 훨씬 자주(20건마다) 확인해서 반응성을 확보한다.
+_SETTING_CHECK_BATCH_SIZE = 20
+
 _precompute_lock = asyncio.Lock()
 
 
@@ -143,6 +148,14 @@ async def precompute_overlaps() -> None:
         computed = 0
         found_overlaps = 0
         for prev_chapter, next_chapter in pending:
+            if computed % _SETTING_CHECK_BATCH_SIZE == 0 and not db.get_setting(
+                "overlap_precompute_enabled", "true"
+            ) == "true":
+                # 이미 도는 중에 설정이 꺼졌으면, 다음 배치를 시작하지 않고 여기서
+                # 바로 멈춘다 - 지금까지 계산된 것만 캐시에 남고, 나머지는 그대로
+                # "아직 계산 안 됨" 상태로 남아 리더가 열 때 그 자리에서 계산된다.
+                log.info(f"화 전환 겹침 사전 계산 중단됨(설정 꺼짐) - {computed}/{len(pending)}건까지 처리")
+                return
             try:
                 skip_pages = await asyncio.to_thread(
                     compute_overlap_pages, prev_chapter["path"], next_chapter["path"]
