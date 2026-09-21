@@ -401,7 +401,7 @@ a {
   gap: 8px;
   margin-top: 8px;
 }
-.scope-btn {
+.scope-btn, .overlap-toggle-btn {
   flex: 1;
   padding: 8px;
   border-radius: 8px;
@@ -411,10 +411,10 @@ a {
   font-size: 13px;
   cursor: pointer;
 }
-.scope-btn:hover {
+.scope-btn:hover, .overlap-toggle-btn:hover {
   border-color: var(--accent);
 }
-.scope-btn.active {
+.scope-btn.active, .overlap-toggle-btn.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #0a1a12;

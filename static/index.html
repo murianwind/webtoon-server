@@ -73,6 +73,17 @@
       </div>
     </div>
     <div class="settings-section">
+      <div class="settings-section-title">화 전환 겹침 자동 감지</div>
+      <div class="settings-hint">화가 바뀔 때 이전 화 끝부분과 겹치는(재탕) 페이지를 자동으로 건너뛰는 기능입니다.
+      끄면 재스캔 직후 미리 계산해두는 작업만 안 하고, 실제로 보는 화는 그 자리에서 그대로 계산되어
+      기능 자체는 계속 동작합니다. 라이브러리가 아주 크거나 계산이 오래 걸려 서버가 불안정하면
+      꺼보세요.</div>
+      <div class="scope-toggle-buttons">
+        <button id="overlapPrecomputeOnBtn" class="overlap-toggle-btn" data-enabled="true">사전 계산 켜짐</button>
+        <button id="overlapPrecomputeOffBtn" class="overlap-toggle-btn" data-enabled="false">사전 계산 꺼짐</button>
+      </div>
+    </div>
+    <div class="settings-section">
       <div class="settings-section-title">백업 / 복원</div>
       <div class="settings-hint">읽음 진행률, 검색/정렬/필터 설정, 제외된 폴더 목록을 전부 포함합니다.</div>
       <div class="read-action-picker-buttons">
@@ -985,11 +996,39 @@ for (const btn of document.querySelectorAll(".scope-btn")) {
   });
 }
 
+const OVERLAP_PRECOMPUTE_SETTING_KEY = "overlap_precompute_enabled";
+
+async function renderOverlapPrecomputeButtons() {
+  let enabled = "true";
+  try {
+    const res = await fetch(`/api/settings/${OVERLAP_PRECOMPUTE_SETTING_KEY}`);
+    const data = await res.json();
+    if (data.value === "false") enabled = "false";
+  } catch (e) {
+    // 못 받아와도 기본값(켜짐)으로 표시
+  }
+  for (const btn of document.querySelectorAll(".overlap-toggle-btn")) {
+    btn.classList.toggle("active", btn.dataset.enabled === enabled);
+  }
+}
+
+for (const btn of document.querySelectorAll(".overlap-toggle-btn")) {
+  btn.addEventListener("click", async () => {
+    await fetch(`/api/settings/${OVERLAP_PRECOMPUTE_SETTING_KEY}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: btn.dataset.enabled }),
+    });
+    renderOverlapPrecomputeButtons();
+  });
+}
+
 function openSettingsPanel() {
   settingsPanel.classList.add("open");
   settingsOverlay.classList.add("open");
   renderFolderLists();
   renderReaderScopeButtons();
+  renderOverlapPrecomputeButtons();
 }
 function closeSettingsPanel() {
   settingsPanel.classList.remove("open");
