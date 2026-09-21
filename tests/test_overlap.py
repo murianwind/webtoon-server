@@ -152,3 +152,102 @@ def test_precompute_overlaps_stops_midway_when_setting_turned_off(library, monke
 
     """THEN 5건을 다 처리하지 않고 중간에 멈춘다(꺼진 걸 감지한 시점 이후로는 처리 안 함)"""
     assert processed_so_far["n"] < 5
+
+
+def test_lock_released_and_remaining_items_finish_after_midway_stop(library, monkeypatch):
+    """GIVEN 도중에 설정이 꺼져서 5건 중 일부만 처리되고 멈췄을 때"""
+    import asyncio as _asyncio
+
+    from app import db
+    from conftest import make_chapter_zip
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(overlap, "_SETTING_CHECK_BATCH_SIZE", 2)
+
+    for i in range(6):
+        make_chapter_zip(str(library / "naver" / "재개테스트" / f"{i:03d}.zip"))
+
+    from app.main import app as _app
+
+    with TestClient(_app) as client:
+        client.post("/api/rescan")
+
+    processed = {"n": 0}
+    original_compute = overlap.compute_overlap_pages
+
+    def fake_compute(prev_path, next_path):
+        processed["n"] += 1
+        if processed["n"] == 2:
+            db.set_setting("overlap_precompute_enabled", "false")
+        return original_compute(prev_path, next_path)
+
+    with monkeypatch.context() as m:
+        m.setattr(overlap, "compute_overlap_pages", fake_compute)
+        _asyncio.run(overlap.precompute_overlaps())
+    assert processed["n"] < 5  # 중간에 멈췄음을 재확인
+
+    """THEN 멈춘 직후 락이 풀려있어야 한다(다음 재스캔이 영원히 막히면 안 됨)"""
+    assert overlap._precompute_lock.locked() is False
+
+    """AND 설정을 다시 켜고 재실행하면, 아직 못 한 나머지가 이어서 전부 처리된다
+    (중간에 멈춘 게 데이터를 잃어버리거나 다음 실행을 막는 게 아니라는 뜻)"""
+    db.set_setting("overlap_precompute_enabled", "true")
+    _asyncio.run(overlap.precompute_overlaps())
+
+    from app import catalog
+    series = list(catalog.get_series_map().values())[0]
+    chapters = series["chapters"]
+    for i in range(1, len(chapters)):
+        assert db.get_cached_overlap(chapters[i]["id"]) is not None
+
+
+def test_off_setting_does_not_block_cover_precompute_in_same_generation(library, monkeypatch):
+    """GIVEN 겹침 사전계산이 꺼져있을 때(재스캔 중이라 이번 세대에서 건너뛰어짐)"""
+    from unittest.mock import patch
+
+    from app import db, services
+
+    db.set_setting("overlap_precompute_enabled", "false")
+    covers_called = []
+
+    async def fake_covers():
+        covers_called.append(1)
+
+    """WHEN 스캔 후 사전계산을 실행하면"""
+    with patch("app.services.precompute_covers", fake_covers):
+        import asyncio as _asyncio
+        _asyncio.run(services._precompute_after_scan())
+
+    """THEN 겹침은 건너뛰지만 커버 생성은 그대로 실행된다 - 이 설정은 겹침 계산만
+    끄는 것이지, 화면에 커버가 아예 안 보이게 만드는 게 아니다"""
+    assert covers_called == [1]
+
+    """AND 전역 락도 정상적으로 풀려서 다음 세대가 막히지 않는다"""
+    assert services._global_precompute_lock.locked() is False
+
+
+def test_realtime_endpoint_works_right_after_a_midway_stop(client, library, monkeypatch):
+    """GIVEN 겹침 사전계산이 도중에 멈춰서 일부 화 전환은 아직 캐시가 없을 때"""
+    from conftest import make_chapter_zip
+
+    monkeypatch.setattr(overlap, "_SETTING_CHECK_BATCH_SIZE", 1)
+    from app import db
+
+    for i in range(4):
+        make_chapter_zip(str(library / "naver" / "실시간재확인" / f"{i:03d}.zip"))
+    client.post("/api/rescan")
+    db.set_setting("overlap_precompute_enabled", "false")
+
+    import asyncio as _asyncio
+    _asyncio.run(overlap.precompute_overlaps())  # 설정이 꺼져있어도 직접 호출하면 도는지와
+    # 무관하게, 아래에서 확인할 건 "그래도 실시간 API는 항상 정상 동작한다"는 것
+
+    series_id = client.get("/api/series").json()[0]["id"]
+    chapters = client.get(f"/api/series/{series_id}/chapters").json()["chapters"]
+
+    """WHEN 아직 캐시가 없을 수 있는 화 전환의 겹침 정보를 실시간 API로 조회하면"""
+    for ch in chapters[1:]:
+        r = client.get(f"/api/chapters/{ch['id']}/overlap")
+        """THEN 사전계산 설정 상태와 무관하게 전부 정상 응답한다"""
+        assert r.status_code == 200
+        assert "skip_pages" in r.json()
