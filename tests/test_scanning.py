@@ -162,3 +162,34 @@ def test_completed_scan_prunes_genuinely_deleted_folders(client, library):
     """THEN 이번에는(완주했으므로) 진짜로 사라진 웹툰B만 정리된다"""
     refs = {ref for _, ref in catalog.get_all_folder_refs()}
     assert refs == {"웹툰A", "웹툰C"}
+
+
+def test_reading_progress_survives_exclude_then_reinclude(client, library):
+    """GIVEN 웹툰을 하나 읽어서 이어보기 진행률이 저장되어 있을 때"""
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "002.zip"))
+    client.post("/api/rescan")
+    series_id = client.get("/api/series").json()[0]["id"]
+    chapters = client.get(f"/api/series/{series_id}/chapters").json()["chapters"]
+    first_chapter_id = chapters[0]["id"]
+
+    client.put(
+        f"/api/series/{series_id}/progress",
+        json={"chapter_id": first_chapter_id, "page_index": 1},
+    )
+    before = client.get(f"/api/series/{series_id}/continue").json()
+    assert before["chapter_id"] == first_chapter_id
+
+    """WHEN 그 웹툰 폴더를 제외했다가 다시 포함시키면(중간에 전체 재스캔 없이)"""
+    client.post("/api/series-folders/exclude", json={"platform": "naver", "series": "웹툰A"})
+    assert client.get("/api/series").json() == []  # 제외된 동안엔 목록에서 빠짐
+
+    client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
+
+    """THEN 시리즈 ID가 폴더 경로 기준으로 그대로 유지되어, 이전에 읽던 위치가
+    정확히 그대로 남아있다(제외/재포함이 진행률 테이블을 전혀 건드리지 않으므로)"""
+    restored_series_id = client.get("/api/series").json()[0]["id"]
+    assert restored_series_id == series_id
+    after = client.get(f"/api/series/{series_id}/continue").json()
+    assert after["chapter_id"] == first_chapter_id
+    assert after["page_index"] == 1
