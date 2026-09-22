@@ -115,6 +115,7 @@ services:
       - "TZ=Asia/Seoul"                                  # 로그/재스캔 시각을 한국 시간 기준으로
       - "PUBLIC_BASE_URL="                               # <-- 여기 수정(선택): 외부 알림 링크가 필요할 때만 도메인 입력
       - "RESCAN_INTERVAL_SECONDS=7200"                   # <-- 여기 수정(선택): 자동 재스캔 주기(초)
+      # - "RESCAN_SCHEDULE=0 3 * * *"                      # <-- 특정 시각에 재스캔하고 싶으면(선택): 크론 표현식 또는 숫자(초)
       # - "SLOW_PLATFORMS=gdrive"                        # <-- 클라우드 드라이브 예시(선택): 콤마로 구분한 플랫폼
       #                                                   #     태그명(예: gdrive,onedrive). 이 목록에 있는 플랫폼은
       #                                                   #     항상 로컬보다 나중에 스캔됩니다.
@@ -160,6 +161,7 @@ volumes:
 |---|---|---|
 | `PUBLIC_BASE_URL` | (없음) | 외부 알림 봇 등에서 최신 화 링크를 만들 때 쓰는 기준 도메인 |
 | `RESCAN_INTERVAL_SECONDS` | `7200`(2시간) | 자동 재스캔 주기(초). `0` 이하로 두면 자동 재스캔이 꺼짐 |
+| `RESCAN_SCHEDULE` | (없음) | `RESCAN_INTERVAL_SECONDS`와 별개의 추가 옵션. 값이 순수 숫자면 `RESCAN_INTERVAL_SECONDS`처럼 "몇 초 간격"으로, 숫자가 아니면 크론(cron) 표현식으로 해석해서 그 일정에 맞춰 재스캔함(예: `0 3 * * *` = 매일 새벽 3시). 비워두면(기본값) `RESCAN_INTERVAL_SECONDS`만 그대로 적용됨 |
 | `SLOW_PLATFORMS` | (없음) | 콤마로 구분한 플랫폼 태그명. 네트워크 드라이브(원드라이브 등)로 마운트한 태그를 적어두면, 로컬 플랫폼을 전부 먼저 스캔한 뒤 이 목록을 나중에 스캔하고, 파일 읽기도 로컬과 분리된 전용 스레드풀에서 처리해 로컬 열람에 영향을 안 주게 됨 |
 | `SERIES_SCAN_TIMEOUT_SECONDS` | `30` | 시리즈 하나를 스캔하는 데 이 시간을 넘기면 포기하고 다음으로 넘어감(네트워크 드라이브가 응답 없을 때 전체 스캔이 멈춰버리는 걸 방지). 필요하면 늘릴 수 있음 |
 | `SLOW_PLATFORM_SCAN_TIMEOUT_SECONDS` | `120` | `SLOW_PLATFORMS`로 지정된 플랫폼에는 `SERIES_SCAN_TIMEOUT_SECONDS` 대신 이 값을 씀. rclone 등 원격 마운트는 콜드 리드 하나가 30초를 넘기는 일이 흔해서, 로컬과 같은 타임아웃을 쓰면 "그냥 좀 느린 것"도 "완전히 멈춘 것"으로 오판해 스캔 실패가 잦아짐 |

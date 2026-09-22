@@ -11,6 +11,9 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+from datetime import datetime
+
+from croniter import croniter
 
 from . import catalog, covers, db, overlap, scan
 
@@ -21,6 +24,12 @@ PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 
 # 라이브러리 자동 재스캔 주기(초). 기본 2시간. 0 이하로 설정하면 자동 재스캔을 끈다.
 RESCAN_INTERVAL_SECONDS = int(os.environ.get("RESCAN_INTERVAL_SECONDS", "7200"))
+
+# RESCAN_INTERVAL_SECONDS와 별개의 추가 옵션 - 특정 시각에(예: 새벽에만) 재스캔하고
+# 싶을 때 쓴다. 값이 순수 숫자면 RESCAN_INTERVAL_SECONDS와 똑같이 "몇 초 간격"으로
+# 해석하고, 숫자가 아니면 크론(cron) 표현식으로 해석해서 그 일정에 맞춰 실행한다.
+# 비워두면(기본값) 기존 RESCAN_INTERVAL_SECONDS만 그대로 쓴다 - 기존 배포에 영향 없음.
+RESCAN_SCHEDULE = os.environ.get("RESCAN_SCHEDULE", "").strip()
 
 BACKUP_VERSION = 3  # v2부터 read_chapters, v3부터 공유 프로필 전체(프로필/허용목록/
 # 진행률/설정/시간대/요청내역) 포함
@@ -227,10 +236,54 @@ async def initial_scan() -> None:
         log.exception("초기 스캔 중 오류 발생")
 
 
+def _rescan_schedule_is_plain_number(value: str) -> bool:
+    return value.lstrip("-").isdigit()
+
+
+def is_rescan_enabled() -> bool:
+    """자동 재스캔이 켜져 있는지. RESCAN_SCHEDULE이 비어있으면 RESCAN_INTERVAL_SECONDS
+    기준(0 이하면 꺼짐)이고, RESCAN_SCHEDULE이 순수 숫자면 그 값 기준(역시 0 이하면
+    꺼짐), 크론 표현식이면 항상 켜진 것으로 본다(끄고 싶으면 그냥 비워두면 됨)."""
+    if not RESCAN_SCHEDULE:
+        return RESCAN_INTERVAL_SECONDS > 0
+    if _rescan_schedule_is_plain_number(RESCAN_SCHEDULE):
+        return int(RESCAN_SCHEDULE) > 0
+    return True
+
+
+def seconds_until_next_rescan() -> float:
+    """다음 재스캔까지 몇 초 남았는지 계산한다.
+
+    RESCAN_SCHEDULE이 비어있으면 기존 그대로 RESCAN_INTERVAL_SECONDS를 쓴다(기존
+    배포 동작에 전혀 영향 없음). RESCAN_SCHEDULE에 값이 있으면, 그 값이 순수
+    숫자(예: "300")면 RESCAN_INTERVAL_SECONDS와 똑같이 "몇 초 간격"으로 해석하고,
+    숫자가 아니면 크론 표현식(예: "0 3 * * *" = 매일 새벽 3시)으로 해석해서 다음
+    실행 시각까지 남은 초를 돌려준다. 크론 표현식이 잘못됐으면 croniter가 예외를
+    던지는데, 이건 호출하는 쪽(auto_rescan_loop)에서 잡아서 기본 주기로 대체한다."""
+    if not RESCAN_SCHEDULE:
+        return RESCAN_INTERVAL_SECONDS
+    if _rescan_schedule_is_plain_number(RESCAN_SCHEDULE):
+        return int(RESCAN_SCHEDULE)
+    now = datetime.now()
+    next_time = croniter(RESCAN_SCHEDULE, now).get_next(datetime)
+    return max((next_time - now).total_seconds(), 1)
+
+
 async def auto_rescan_loop() -> None:
-    """RESCAN_INTERVAL_SECONDS마다 반복되는 자동 재스캔 루프."""
+    """RESCAN_SCHEDULE(설정했으면) 또는 RESCAN_INTERVAL_SECONDS 주기로 반복되는 자동
+    재스캔 루프."""
     while True:
-        await asyncio.sleep(RESCAN_INTERVAL_SECONDS)
+        try:
+            wait_seconds = seconds_until_next_rescan()
+        except Exception:
+            # 크론 표현식이 잘못 입력된 경우 등 - 서버가 죽거나 재스캔이 아예 멈추면
+            # 안 되니, 기본 주기로 대체해서 계속 동작하게 한다.
+            log.exception(
+                f"RESCAN_SCHEDULE 값이 올바르지 않아({RESCAN_SCHEDULE!r}) "
+                f"기본 주기({RESCAN_INTERVAL_SECONDS}초)로 대체합니다"
+            )
+            wait_seconds = RESCAN_INTERVAL_SECONDS
+        await asyncio.sleep(wait_seconds)
         try:
             old_ids = set(catalog.get_series_map().keys())
             series_map, chapters_map = await scan_all_platforms_incrementally()

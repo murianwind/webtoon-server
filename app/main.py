@@ -210,8 +210,14 @@ async def startup_scan():
     # 플랫폼별로 스캔이 끝나는 대로 목록에 자연스럽게 반영된다.
     asyncio.create_task(services.initial_scan())
 
-    if services.RESCAN_INTERVAL_SECONDS > 0:
-        log.info(f"자동 재스캔 활성화 - {services.RESCAN_INTERVAL_SECONDS / 60:.0f}분마다 실행")
+    if services.is_rescan_enabled():
+        if services.RESCAN_SCHEDULE and not services.RESCAN_SCHEDULE.lstrip("-").isdigit():
+            log.info(f"자동 재스캔 활성화 - 크론 일정({services.RESCAN_SCHEDULE})에 따라 실행")
+        else:
+            interval = (
+                int(services.RESCAN_SCHEDULE) if services.RESCAN_SCHEDULE else services.RESCAN_INTERVAL_SECONDS
+            )
+            log.info(f"자동 재스캔 활성화 - {interval / 60:.0f}분마다 실행")
         asyncio.create_task(services.auto_rescan_loop())
     else:
         log.info("자동 재스캔 비활성화됨 (RESCAN_INTERVAL_SECONDS <= 0)")
