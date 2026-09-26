@@ -37,15 +37,17 @@ def make_id(*parts: str) -> str:
 
 
 def _clean_title(text: str, strip_trailing_hash: bool = True) -> str:
-    """추출된 제목 후보에서 구분자/완결표시/날짜형 숫자/장식성 특수문자를 정리."""
+    """추출된 제목 후보에서 구분자/날짜형 숫자/장식성 특수문자를 정리.
+    완결 표시((完)/(완)/완결)는 여기서 지우지 않는다 - parse_chapter_label이 최종
+    라벨 전체에 대해 한 번만 정규화해서, 원래 어디에 있었든 라벨 끝에 "완결" 하나로
+    통일해서 남긴다(예전에는 여기서 그냥 지워버려서, "세크메트의 분노 (完) 시즌1
+    완결"처럼 회차 제목 자체에 있던 완결 표시까지 통째로 사라지는 문제가 있었다)."""
     # 앞뒤에 붙는 구분자류 제거 (마커 앞/뒤 어느 쪽 텍스트든 동일하게 적용)
     text = re.sub(r"^[\s\-–—.:：·‧․・,]+", "", text)
     text = re.sub(r"[\s\-–—.:：·‧․・,]+$", "", text)
     if strip_trailing_hash:
         # 카카오식 파일명 끝의 #숫자(회차 제목과 무관한 부가 번호) 제거
         text = re.sub(r"#\d+$", "", text)
-    # 완결 표시 제거
-    text = re.sub(r"\(完\)|\(완\)|완결", "", text)
     # 날짜로 추정되는 "숫자-숫자" 패턴 제거 (예: 6-28)
     text = re.sub(r"\b\d{1,2}-\d{1,2}\b", "", text)
     # 장식성 특수문자 제거 (단어 사이에 있을 수 있으니 공백으로 치환 후 나중에 정리)
@@ -54,6 +56,18 @@ def _clean_title(text: str, strip_trailing_hash: bool = True) -> str:
     text = re.sub(r"\((\d+)\)\s*$", r" \1", text)
     text = re.sub(r"\s+", " ", text).strip(" -_")
     return text
+
+
+def _normalize_completion_marker(label: str) -> str:
+    """라벨 안에 완결 표시((完)/(완)/완결)가 있으면 그 표시를 지우고, 라벨 맨 끝에
+    "완결"을 딱 한 번만 다시 붙여서 위치와 표기를 통일한다. 표시가 여러 개
+    겹쳐 있어도(예: "(完) ... 완결") 결과에는 항상 끝에 하나만 남는다. 완결
+    표시가 아예 없으면 그대로 돌려준다."""
+    if not re.search(r"\(完\)|\(완\)|완결", label):
+        return label
+    cleaned = re.sub(r"\(完\)|\(완\)|완결", "", label)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_")
+    return f"{cleaned} 완결" if cleaned else "완결"
 
 
 _SEPARATOR_CLASS = r"[\s：:\-–—·‧․・,]*"
@@ -84,7 +98,9 @@ def _series_prefix_length(content: str, series_name: str) -> int:
 
 def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
     """
-    zip 파일명(확장자 제외)에서 (정렬키, 표시라벨) 추출.
+    zip 파일명(확장자 제외)에서 (정렬키, 표시라벨) 추출. 실제 파싱은
+    _parse_chapter_label_raw가 하고, 여기서는 그 결과 라벨에 완결 표시 정규화만
+    한 번 더 적용한다(어느 파싱 경로를 타든 결과가 일관되게 처리되도록).
 
     예)
       "103 마법사랑해 100화 - 아스라이 스러지는 (7)" -> (103, "100화 · 아스라이 스러지는 7")
@@ -96,7 +112,14 @@ def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
       "117 기기괴괴2 절멸의 도시 #2" (series=기기괴괴2) -> (117, "절멸의 도시 2")
       "017 로도스도 전기  사령의 여왕 제16화 ..." (series="로도스도 전기 ： 사령의 여왕")
                                                      -> (17, "16화 · ...")
+      "049 퇴마록 세계편 세크메트의 분노 (完) 시즌1 완결" (series=퇴마록 : 세계편)
+                                                     -> (49, "세크메트의 분노 시즌1 완결")
     """
+    sort_key, label = _parse_chapter_label_raw(stem, series_name)
+    return sort_key, _normalize_completion_marker(label)
+
+
+def _parse_chapter_label_raw(stem: str, series_name: str = "") -> tuple[int, str]:
     sort_match = re.match(r"^(\d+)", stem)
     sort_key = int(sort_match.group(1)) if sort_match else 0
 
