@@ -42,3 +42,19 @@ def test_completion_marker_as_entire_remaining_title():
     _, label = parse_chapter_label("001 어떤웹툰 완결", series_name="어떤웹툰")
     """THEN 빈 제목이 되지 않고 "완결" 자체가 라벨이 된다"""
     assert label == "완결"
+
+
+def test_completion_marker_removed_from_inside_parens_leaves_no_dangling_space():
+    """GIVEN 완결 표시가 다른 텍스트와 같은 괄호 안에 있을 때(예: "(2부 완결)")"""
+    _, label = parse_chapter_label(
+        "083 해시의 신루 83화 어디에 있느냐？ (2부 완결)", series_name="해시의 신루"
+    )
+    """THEN 완결만 지워지고, 닫는 괄호 앞에 어색한 공백 없이 정리되어 끝에 "완결"이 붙는다"""
+    assert label == "83화 · 어디에 있느냐 (2부) 완결"
+
+
+def test_completion_marker_alone_in_parens_removes_empty_parens():
+    """GIVEN 완결 표시가 괄호 안에 단독으로 있을 때(예: "(완결)")"""
+    _, label = parse_chapter_label("0447_444화 (완결)#188")
+    """THEN 완결을 지운 뒤 텅 빈 "()"까지 같이 정리되고, 끝에 "완결"만 남는다"""
+    assert label == "444화 · 완결"

@@ -62,10 +62,17 @@ def _normalize_completion_marker(label: str) -> str:
     """라벨 안에 완결 표시((完)/(완)/완결)가 있으면 그 표시를 지우고, 라벨 맨 끝에
     "완결"을 딱 한 번만 다시 붙여서 위치와 표기를 통일한다. 표시가 여러 개
     겹쳐 있어도(예: "(完) ... 완결") 결과에는 항상 끝에 하나만 남는다. 완결
-    표시가 아예 없으면 그대로 돌려준다."""
+    표시가 아예 없으면 그대로 돌려준다.
+
+    완결 표시를 지우고 나면 그 자리에 흔적이 남을 수 있다 - "(2부 완결)"처럼
+    괄호 "안"에서만 지워지면 "(2부 )"처럼 닫는 괄호 앞에 공백이 남고, "(완결)"처럼
+    괄호 안이 통째로 지워지면 "()"처럼 빈 괄호만 남는다. 둘 다 정리한다."""
     if not re.search(r"\(完\)|\(완\)|완결", label):
         return label
     cleaned = re.sub(r"\(完\)|\(완\)|완결", "", label)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)  # 안이 통째로 비게 된 괄호 "()" 제거
+    cleaned = re.sub(r"\(\s+", "(", cleaned)  # 여는 괄호 뒤에 남은 공백 제거
+    cleaned = re.sub(r"\s+\)", ")", cleaned)  # 닫는 괄호 앞에 남은 공백 제거
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_")
     return f"{cleaned} 완결" if cleaned else "완결"
 
