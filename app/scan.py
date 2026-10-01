@@ -48,8 +48,18 @@ def _clean_title(text: str, strip_trailing_hash: bool = True) -> str:
     if strip_trailing_hash:
         # 카카오식 파일명 끝의 #숫자(회차 제목과 무관한 부가 번호) 제거
         text = re.sub(r"#\d+$", "", text)
-    # 날짜로 추정되는 "숫자-숫자" 패턴 제거 (예: 6-28)
-    text = re.sub(r"\b\d{1,2}-\d{1,2}\b", "", text)
+    # 날짜로 추정되는 "숫자-숫자" 패턴 제거 (예: 6-28). 다만 "Ep 1-1"처럼 영문
+    # 에피소드 표시 바로 뒤에 붙은 숫자-숫자는 날짜가 아니라 에피소드-파트 번호라
+    # 지우면 안 된다(실제로 "Ep 1-1. BRAVE MAN" ~ "Ep 1-5. BRAVE MAN"처럼 번호만
+    # 다른 회차 5개가 전부 "Ep . BRAVE MAN"으로 뭉개져서 구분이 안 되는 문제가 있었다).
+    # 콜백으로 바로 앞 글자를 직접 확인해서, 공백이 몇 개든(또는 없어도) 안전하게 판단한다.
+    def _strip_date_like(match: re.Match) -> str:
+        before = text[: match.start()].rstrip()
+        if before and before[-1].isalpha() and before[-1].isascii():
+            return match.group(0)  # 영문 바로 뒤라면 에피소드 번호로 보고 그대로 둠
+        return ""
+
+    text = re.sub(r"\b\d{1,2}-\d{1,2}\b", _strip_date_like, text)
     # 장식성 특수문자 제거 (단어 사이에 있을 수 있으니 공백으로 치환 후 나중에 정리)
     text = re.sub(r"[？！～·‧․・•●○◆■□※]", " ", text)
     # 끝에 남은 "(숫자)"는 " 숫자"로 (예: (2) -> " 2")
