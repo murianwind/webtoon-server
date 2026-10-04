@@ -20,6 +20,7 @@ DB_PATH = os.environ.get("DB_PATH", "/data/progress.db")
 PAGE_FINISHED_SENTINEL = 1_000_000
 
 _EXCLUDED_SERIES_SETTING_KEY = "excluded_series"
+_LATER_SERIES_SETTING_KEY = "later_series"
 
 
 def _utc_now_iso() -> str:
@@ -215,6 +216,23 @@ def get_excluded_series() -> set[tuple[str, str]]:
 def set_excluded_series(pairs: set[tuple[str, str]]) -> None:
     data = [{"platform": p, "series": s} for p, s in sorted(pairs)]
     set_setting(_EXCLUDED_SERIES_SETTING_KEY, json.dumps(data, ensure_ascii=False))
+
+
+def get_later_series_ids() -> set[str]:
+    """"나중에 읽기"로 옮겨둔 시리즈 ID 집합. 여기에 없는 시리즈는 전부 "정주행 중"이다
+    (기본값이 정주행 중이라, 아무것도 안 한 기존/신규 시리즈는 따로 저장할 게 없다).
+    app_settings에 JSON으로 저장하므로 백업/복원에 자동으로 포함된다."""
+    raw = get_setting(_LATER_SERIES_SETTING_KEY)
+    if not raw:
+        return set()
+    try:
+        return {str(series_id) for series_id in json.loads(raw)}
+    except Exception:
+        return set()
+
+
+def set_later_series_ids(series_ids: set[str]) -> None:
+    set_setting(_LATER_SERIES_SETTING_KEY, json.dumps(sorted(series_ids), ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------

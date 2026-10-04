@@ -15,9 +15,6 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="웹툰">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="웹툰">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -40,6 +37,10 @@
     <option value="unread">안읽은 회차 많은순</option>
     <option value="title">제목순</option>
   </select>
+</div>
+<div id="listTabs" class="list-tabs" role="tablist" aria-label="목록 구분" style="display:none">
+  <button class="list-tab active" role="tab" aria-selected="true" data-list="reading"><span>정주행 중</span><span class="list-tab-count">0</span></button>
+  <button class="list-tab" role="tab" aria-selected="false" data-list="later"><span>나중에 읽기</span><span class="list-tab-count">0</span></button>
 </div>
 <div id="profileViewTabs" class="filter-tabs" style="display:none">
   <button class="filter-tab active" id="profileTabMine">내 웹툰</button>
@@ -164,6 +165,7 @@
 <aside id="chapterSidebar" class="sidebar">
   <div class="sidebar-header">
     <span id="chapterSidebarTitle">회차 목록</span>
+    <button id="chapterSidebarMove" class="sidebar-move-btn" style="display:none"></button>
     <button id="chapterSidebarClose" class="sidebar-close" aria-label="닫기">×</button>
   </div>
   <div id="chapterSidebarInfo" class="series-info-panel" style="display:none"></div>
@@ -178,6 +180,15 @@
   </div>
   <div id="readActionBody"></div>
 </div>
+
+<div id="cardMenuOverlay" class="sidebar-overlay"></div>
+<div id="cardMenu" class="card-menu" role="menu" hidden>
+  <div id="cardMenuTitle" class="card-menu-title"></div>
+  <button id="cardMenuMove" class="card-menu-item" role="menuitem"></button>
+  <button id="cardMenuSelect" class="card-menu-item" role="menuitem">여러 개 선택해서 이동</button>
+  <button id="cardMenuCancel" class="card-menu-item cancel">취소</button>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <main id="grid" class="grid"></main>
 <main id="browseGrid" class="grid" style="display:none"></main>
@@ -214,6 +225,13 @@ const LS_QUERY = `webtoon:index:query:${PROFILE_TOKEN || "admin"}`; // 검색어
 const FILTER_KEY = "status_filter"; // 서버(app_settings)에 저장 -> 모든 기기에서 동일하게 적용
 const PLATFORM_FILTER_KEY = "platform_filter"; // 위와 같은 이유로 서버에 저장
 const SORT_KEY = "sort_mode"; // 위와 같은 이유로 서버에 저장(검색어는 입력마다 바뀌어서 과하니 localStorage 유지)
+const SORT_KEY_LATER = "sort_mode_later"; // 나중에 읽기 탭의 정렬(탭별로 따로 기억)
+const SORT_VALUES = ["latest", "unread", "title"];
+const LIST_READING = "reading"; // 정주행 중 - 기본값이라 아무것도 안 한 시리즈는 전부 여기
+const LIST_LATER = "later"; // 나중에 읽기
+const LIST_LABELS = { [LIST_READING]: "정주행 중", [LIST_LATER]: "나중에 읽기" };
+const LIST_MOVE_PHRASE = { [LIST_READING]: "정주행 중으로", [LIST_LATER]: "나중에 읽기로" };
+const LONG_PRESS_MS = 500;
 const ACTIVE_TAB_KEY = "active_tab"; // 프로필 화면의 "내 웹툰"/"둘러보기" 중 마지막으로 보던 탭
 const STATUS_OPTIONS = [
   { value: "unread", label: "읽지 않음" },
@@ -224,7 +242,13 @@ const STATUS_VALUES = STATUS_OPTIONS.map((o) => o.value);
 
 let allSeries = [];
 let query = localStorage.getItem(LS_QUERY) || "";
-let sortMode = "latest"; // 서버(loadSortSetting)에서 로드됨 - localStorage 대신 프로필별로 분리 저장
+// 앱은 항상 정주행 중에서 시작한다(마지막에 본 탭을 일부러 저장하지 않음) - 나중에 읽기는
+// 의식적으로 열어야 보이는 "서랍"이라서, 열 때마다 아껴둔 웹툰이 눈에 들어오지 않게 한다.
+let activeList = LIST_READING;
+// 탭별 정렬(서버에서 로드). 나중에 읽기는 최근 업데이트순이면 새 회차가 올라온 웹툰이
+// 계속 맨 위로 올라와 유혹이 되므로 제목순이 기본이다.
+let sortModes = { [LIST_READING]: "latest", [LIST_LATER]: "title" };
+let visibleSeriesIds = []; // 지금 화면에 보이는 웹툰 ID들(보이는 웹툰 전체 선택용)
 let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로드되기 전까지의 기본값)
 let selectedPlatforms = new Set(); // 비어있으면 "전체 플랫폼", 여러 개 동시 선택 가능
 let knownPlatforms = []; // /library 바로 아래 폴더 이름 전체 (아직 스캔 안 끝난 것도 포함)
@@ -234,13 +258,14 @@ let selectedIds = new Set(); // 다중 선택
 const searchInput = document.getElementById("searchInput");
 const sortSelect = document.getElementById("sortSelect");
 searchInput.value = query;
-sortSelect.value = sortMode;
+sortSelect.value = sortModes[activeList];
 
 function sortSeries(list) {
   const arr = [...list];
-  if (sortMode === "latest") arr.sort((a, b) => b.latest_update - a.latest_update);
-  else if (sortMode === "unread") arr.sort((a, b) => b.unread_count - a.unread_count);
-  else if (sortMode === "title") arr.sort((a, b) => a.title.localeCompare(b.title, "ko"));
+  const mode = sortModes[activeList];
+  if (mode === "latest") arr.sort((a, b) => b.latest_update - a.latest_update);
+  else if (mode === "unread") arr.sort((a, b) => b.unread_count - a.unread_count);
+  else if (mode === "title") arr.sort((a, b) => a.title.localeCompare(b.title, "ko"));
   return arr;
 }
 
@@ -341,9 +366,12 @@ function renderFilterTabs() {
   updateStickyOffsets(); // 플랫폼 탭 개수가 바뀌면 필터탭 높이도 바뀔 수 있어 매번 재계산
 }
 
-function render() {
-  const grid = document.getElementById("grid");
-  const q = query.trim().toLowerCase();
+function listOf(s) {
+  return s.list || LIST_READING; // 서버가 list를 안 내려주는 프로필 화면에서도 전부 "정주행 중"으로 취급
+}
+
+// 검색 + 상태/플랫폼 필터를 통과한 것(정주행 중/나중에 읽기로 나누기 전)
+function filterSeries(q) {
   let filtered = q ? allSeries.filter((s) => s.title.toLowerCase().includes(q)) : allSeries;
   if (selectedStatuses.size > 0) {
     filtered = filtered.filter((s) => selectedStatuses.has(seriesStatus(s)));
@@ -351,30 +379,93 @@ function render() {
   if (selectedPlatforms.size > 0) {
     filtered = filtered.filter((s) => selectedPlatforms.has(s.platform));
   }
-  const list = sortSeries(filtered);
+  return filtered;
+}
+
+function countByList(items) {
+  const counts = { [LIST_READING]: 0, [LIST_LATER]: 0 };
+  for (const s of items) counts[listOf(s)] += 1;
+  return counts;
+}
+
+function otherList(list) {
+  return list === LIST_LATER ? LIST_READING : LIST_LATER;
+}
+
+function renderListTabs(counts, hasQuery) {
+  const activeIsEmpty = counts[activeList] === 0;
+  for (const btn of document.querySelectorAll(".list-tab")) {
+    const list = btn.dataset.list;
+    const isActive = list === activeList;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", String(isActive));
+    const badge = btn.querySelector(".list-tab-count");
+    badge.textContent = counts[list];
+    // 검색했는데 지금 탭엔 결과가 없고 다른 탭에만 있으면, 그쪽 탭 숫자를 눈에 띄게 한다
+    badge.classList.toggle("hit", !isActive && hasQuery && activeIsEmpty && counts[list] > 0);
+  }
+}
+
+function emptyMessage(q, useLists) {
+  if (!allSeries.length) return "스캔된 웹툰이 없습니다.<br>라이브러리 폴더를 확인해주세요.";
+  const where = useLists ? `${LIST_LABELS[activeList]}에는 ` : "";
+  if (q) return `${where}검색 결과가 없습니다.`;
+  if (selectedStatuses.size > 0 || selectedPlatforms.size > 0) return `${where}해당하는 웹툰이 없습니다.`;
+  if (activeList === LIST_LATER) {
+    return "나중에 읽기에 둔 웹툰이 없습니다.<br>웹툰을 길게 누르거나(PC는 우클릭) ○로 선택해서 옮길 수 있어요.";
+  }
+  return "정주행 중인 웹툰이 없습니다.<br>나중에 읽기 탭에서 꺼내올 수 있어요.";
+}
+
+function renderEmptyState(grid, q, counts, useLists) {
+  grid.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "empty-state";
+  const message = document.createElement("div");
+  message.innerHTML = emptyMessage(q, useLists);
+  box.appendChild(message);
+
+  // 지금 탭엔 없는데 다른 탭에 있으면(검색 포함) 사라진 게 아니라는 걸 알려주고 바로 갈 수 있게
+  const other = otherList(activeList);
+  if (useLists && counts[other] > 0) {
+    const hint = document.createElement("button");
+    hint.className = "empty-state-hint";
+    hint.textContent = `${LIST_LABELS[other]}에서 ${counts[other]}개 찾았어요 ›`;
+    hint.addEventListener("click", () => setActiveList(other));
+    box.appendChild(hint);
+  }
+  grid.appendChild(box);
+}
+
+function render() {
+  const grid = document.getElementById("grid");
+  const q = query.trim().toLowerCase();
+  const matches = filterSeries(q);
+  const counts = countByList(matches);
+  const useLists = !IS_PROFILE_VIEW; // 목록 구분은 관리자 개인 정리용 - 프로필 화면엔 없다
+  if (useLists) renderListTabs(counts, q !== "");
+
+  const list = sortSeries(useLists ? matches.filter((s) => listOf(s) === activeList) : matches);
+  visibleSeriesIds = list.map((s) => s.id);
 
   if (!list.length) {
-    const msg = q
-      ? "검색 결과가 없습니다."
-      : selectedStatuses.size > 0 || selectedPlatforms.size > 0
-      ? "해당하는 웹툰이 없습니다."
-      : "스캔된 웹툰이 없습니다.<br>라이브러리 폴더를 확인해주세요.";
-    grid.innerHTML = `<div class="empty-state">${msg}</div>`;
+    renderEmptyState(grid, q, counts, useLists);
     return;
   }
 
   grid.innerHTML = "";
   for (const s of list) {
     const isSelected = selectedIds.has(s.id);
+    const isLater = useLists && listOf(s) === LIST_LATER;
     const card = document.createElement("div");
-    card.className = "card" + (isSelected ? " selected" : "");
+    card.className = "card" + (isSelected ? " selected" : "") + (isLater ? " later" : "");
     card.innerHTML = `
       <div class="cover-wrap">
         <span class="platform-tag">${s.platform}</span>
         ${s.unread_count > 0 ? `<span class="unread-badge">${s.unread_count}</span>` : ""}
         <img src="${s.cover_url}" alt="${s.title}" loading="lazy">
         <button class="chapter-list-toggle" title="회차 목록" aria-label="회차 목록">≡</button>
-        <button class="select-toggle" title="읽음 상태 관리용 선택" aria-label="읽음 상태 관리용 선택">${isSelected ? "●" : "○"}</button>
+        <button class="select-toggle" title="선택(읽음 상태 관리·목록 이동)" aria-label="선택(읽음 상태 관리·목록 이동)">${isSelected ? "●" : "○"}</button>
       </div>
       <div class="title">${s.title}</div>
       <div class="chapter-count">${s.progress_display}</div>
@@ -390,7 +481,11 @@ function render() {
       e.stopPropagation();
       openChapterSidebar(s);
     });
-    card.addEventListener("click", () => goContinue(s.id));
+    card.addEventListener("click", () => {
+      if (Date.now() < ignoreCardClickUntil || menuTapIsAccidental()) return; // 길게 눌러 메뉴를 연 직후의 클릭은 열기로 보지 않음
+      goContinue(s.id);
+    });
+    if (useLists) attachCardMenu(card, s);
     grid.appendChild(card);
   }
 }
@@ -445,6 +540,196 @@ async function goContinue(seriesId) {
 }
 
 // ---------------------------------------------------------------------
+// 정주행 중 / 나중에 읽기 (관리자 개인 정리용 - 이어보기 위치와 읽음 기록은 건드리지 않음)
+// ---------------------------------------------------------------------
+
+let toastTimer = null;
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("show"), 2600);
+}
+
+function moveToastMessage(count, target) {
+  return count > 1
+    ? `${count}개를 ${LIST_MOVE_PHRASE[target]} 옮겼어요`
+    : `${LIST_MOVE_PHRASE[target]} 옮겼어요`;
+}
+
+function initListTabs() {
+  const tabs = document.getElementById("listTabs");
+  tabs.style.display = "flex";
+  for (const btn of tabs.querySelectorAll(".list-tab")) {
+    btn.addEventListener("click", () => setActiveList(btn.dataset.list));
+  }
+}
+
+function setActiveList(list) {
+  if (list === activeList) return;
+  activeList = list;
+  sortSelect.value = sortModes[activeList];
+  window.scrollTo(0, 0);
+  clearSelection(); // 다른 탭 웹툰이 선택된 채 남지 않게 정리하고, 목록도 다시 그린다
+}
+
+// 서버에 저장하고 성공하면 화면의 데이터에도 반영한다(다시 그리는 건 호출한 쪽이 한다)
+async function requestMove(seriesIds, target) {
+  try {
+    const res = await fetch("/api/series-lists", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ series_ids: seriesIds, list: target }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (e) {
+    console.error(e);
+    showToast("이동하지 못했어요. 잠시 후 다시 시도해 주세요.");
+    return false;
+  }
+  const moved = new Set(seriesIds);
+  for (const s of allSeries) if (moved.has(s.id)) s.list = target;
+  return true;
+}
+
+// ----- 카드 길게 누르기(모바일) / 우클릭(PC) 이동 메뉴 -----
+
+const cardMenu = document.getElementById("cardMenu");
+const cardMenuOverlay = document.getElementById("cardMenuOverlay");
+let cardMenuSeries = null;
+let ignoreCardClickUntil = 0;
+
+// 길게 눌러서 메뉴가 뜬 뒤 손가락을 떼는 순간, 그 손떼기가 방금 뜬 메뉴/바깥 영역을 누른 것으로
+// 처리되어 메뉴가 바로 닫히거나 엉뚱한 항목이 실행되는 걸 막는다. 오래 누르고 있다가 떼도
+// 막히도록, "메뉴가 뜰 때 손가락이 아직 닿아 있었는지"와 "그 손가락이 떨어진 직후"를 본다.
+let touchesDown = 0;
+let releaseGuardPending = false;
+let releaseGuardUntil = 0;
+document.addEventListener("touchstart", () => { touchesDown += 1; }, { passive: true, capture: true });
+for (const type of ["touchend", "touchcancel"]) {
+  document.addEventListener(type, () => {
+    touchesDown = Math.max(0, touchesDown - 1);
+    if (releaseGuardPending) {
+      releaseGuardPending = false;
+      releaseGuardUntil = Date.now() + 400;
+    }
+  }, { capture: true });
+}
+function menuTapIsAccidental() {
+  return releaseGuardPending || Date.now() < releaseGuardUntil;
+}
+
+function positionCardMenu(x, y) {
+  const margin = 8;
+  const left = Math.min(x, window.innerWidth - cardMenu.offsetWidth - margin);
+  const top = Math.min(y, window.innerHeight - cardMenu.offsetHeight - margin);
+  cardMenu.style.left = `${Math.max(margin, left)}px`;
+  cardMenu.style.top = `${Math.max(margin, top)}px`;
+}
+
+function openCardMenu(series, x, y) {
+  if (cardMenuSeries && cardMenuSeries.id === series.id) return; // 길게 누르기와 contextmenu가 같이 오는 환경 대비
+  cardMenuSeries = series;
+  releaseGuardPending = touchesDown > 0; // 마우스 우클릭이면 해당 없음(바로 눌러도 되도록)
+  ignoreCardClickUntil = Date.now() + 700;
+  document.getElementById("cardMenuTitle").textContent = series.title;
+  document.getElementById("cardMenuMove").textContent = `${LIST_MOVE_PHRASE[otherList(listOf(series))]} 이동`;
+  const asSheet = window.matchMedia("(max-width: 600px)").matches;
+  cardMenu.classList.toggle("sheet", asSheet);
+  cardMenu.hidden = false;
+  cardMenuOverlay.classList.add("open");
+  if (!asSheet) positionCardMenu(x, y);
+}
+
+function closeCardMenu() {
+  cardMenuSeries = null;
+  cardMenu.hidden = true;
+  cardMenuOverlay.classList.remove("open");
+}
+
+function attachCardMenu(card, series) {
+  let timer = null;
+  let startX = 0;
+  let startY = 0;
+  const cancel = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  // PC 우클릭, 그리고 안드로이드 크롬의 길게 누르기
+  card.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    cancel();
+    openCardMenu(series, e.clientX, e.clientY);
+  });
+  // iOS 사파리는 길게 눌러도 contextmenu가 안 오므로 터치로 직접 감지한다
+  card.addEventListener("touchstart", (e) => {
+    cancel();
+    if (e.touches.length !== 1) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    timer = setTimeout(() => {
+      timer = null;
+      openCardMenu(series, startX, startY);
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+  card.addEventListener("touchmove", (e) => {
+    const t = e.touches[0];
+    if (Math.abs(t.clientX - startX) > 10 || Math.abs(t.clientY - startY) > 10) cancel(); // 스크롤 중이면 취소
+  }, { passive: true });
+  card.addEventListener("touchend", cancel);
+  card.addEventListener("touchcancel", cancel);
+}
+
+cardMenuOverlay.addEventListener("click", () => {
+  if (!menuTapIsAccidental()) closeCardMenu();
+});
+document.getElementById("cardMenuCancel").addEventListener("click", () => {
+  if (!menuTapIsAccidental()) closeCardMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && cardMenuSeries) closeCardMenu();
+});
+document.getElementById("cardMenuMove").addEventListener("click", async () => {
+  if (menuTapIsAccidental() || !cardMenuSeries) return;
+  const series = cardMenuSeries;
+  const target = otherList(listOf(series));
+  closeCardMenu();
+  if (await requestMove([series.id], target)) {
+    showToast(moveToastMessage(1, target));
+    render();
+  }
+});
+document.getElementById("cardMenuSelect").addEventListener("click", () => {
+  if (menuTapIsAccidental() || !cardMenuSeries) return;
+  selectedIds.add(cardMenuSeries.id);
+  closeCardMenu();
+  renderActionPanel(); // 선택 패널이 뜨고, 다른 웹툰은 ○로 더 고를 수 있다
+  render();
+});
+
+// ----- 회차 사이드바 상단의 이동 버튼 -----
+
+function updateSidebarMoveButton(series) {
+  const btn = document.getElementById("chapterSidebarMove");
+  if (IS_PROFILE_VIEW) {
+    btn.style.display = "none";
+    return;
+  }
+  const current = allSeries.find((s) => s.id === series.id) || series; // 다시 불러온 뒤의 최신 객체
+  const target = otherList(listOf(current));
+  btn.textContent = `${LIST_MOVE_PHRASE[target]} 이동`;
+  btn.style.display = "";
+  btn.onclick = async () => {
+    if (await requestMove([series.id], target)) {
+      showToast(moveToastMessage(1, target));
+      render();
+      updateSidebarMoveButton(series);
+    }
+  };
+}
+
+// ---------------------------------------------------------------------
 // 읽음/안읽음 처리 패널 (여러 웹툰 동시 선택 지원)
 // ---------------------------------------------------------------------
 
@@ -470,10 +755,16 @@ function renderActionPanel() {
 
   const body = document.getElementById("readActionBody");
 
+  // 목록 이동/전체 선택은 관리자 개인 정리용이라 프로필 화면에는 없다
+  const listButtons = IS_PROFILE_VIEW
+    ? ""
+    : `
+      <button data-act="move" class="move-act">${LIST_MOVE_PHRASE[otherList(activeList)]} 이동 (${selectedIds.size})</button>
+      <button data-act="select-all">보이는 웹툰 전체 선택</button>`;
   body.innerHTML = `
     <div class="read-action-grid">
       <button data-act="all-read">전체 읽음으로 표시</button>
-      <button data-act="all-unread">전체 읽지 않음으로 표시</button>
+      <button data-act="all-unread">전체 읽지 않음으로 표시</button>${listButtons}
     </div>
   `;
   for (const btn of body.querySelectorAll("button[data-act]")) {
@@ -489,7 +780,24 @@ async function putReadState(seriesId, body) {
   });
 }
 
+function selectAllVisible() {
+  selectedIds = new Set(visibleSeriesIds);
+  renderActionPanel();
+  render();
+}
+
+async function moveSelected() {
+  const target = otherList(activeList);
+  const ids = [...selectedIds];
+  if (await requestMove(ids, target)) {
+    showToast(moveToastMessage(ids.length, target));
+    clearSelection(); // 선택 해제 + 목록 다시 그리기
+  }
+}
+
 async function onActionButton(act) {
+  if (act === "select-all") return selectAllVisible();
+  if (act === "move") return moveSelected();
   const read = act === "all-read";
   await Promise.all(
     [...selectedIds].map((id) => putReadState(id, { scope: "all", read }))
@@ -517,17 +825,24 @@ async function loadFilterSetting() {
   }
 }
 
-async function loadSortSetting() {
+function sortKeyOf(list) {
+  return list === LIST_LATER ? SORT_KEY_LATER : SORT_KEY;
+}
+
+async function loadSortSettingFor(list) {
   try {
-    const res = await fetch(`/api/settings/${SORT_KEY}`);
+    const res = await fetch(`/api/settings/${sortKeyOf(list)}`);
     const data = await res.json();
-    if (data.value && ["latest", "unread", "title"].includes(data.value)) {
-      sortMode = data.value;
-      sortSelect.value = sortMode;
-    }
+    if (data.value && SORT_VALUES.includes(data.value)) sortModes[list] = data.value;
   } catch (e) {
-    // 실패 시 기본값("latest") 유지
+    // 실패 시 그 탭의 기본값 유지
   }
+}
+
+async function loadSortSettings() {
+  // 나중에 읽기 정렬은 목록 구분이 있는 관리자 화면에서만 의미가 있다
+  await Promise.all([loadSortSettingFor(LIST_READING), IS_PROFILE_VIEW ? null : loadSortSettingFor(LIST_LATER)]);
+  sortSelect.value = sortModes[activeList];
 }
 
 async function fetchSeries() {
@@ -620,12 +935,15 @@ function updateStickyOffsets() {
   // 이 값이 그냥 0으로 계산되어 예전과 동일한 결과가 나온다.
   const profileTabsHeight = profileViewTabs ? profileViewTabs.offsetHeight : 0;
   const filterTabsHeight = filterTabs.offsetHeight;
+  // 정주행 중/나중에 읽기 탭도 프로필 탭과 같은 자리에 쌓인다(관리자 화면에서만 보임)
+  const listTabs = document.getElementById("listTabs");
+  const listTabsHeight = listTabs ? listTabs.offsetHeight : 0;
 
   const root = document.documentElement.style;
   root.setProperty("--toolbar-sticky-top", `${topbarHeight}px`);
   root.setProperty("--profile-tabs-sticky-top", `${topbarHeight + toolbarHeight}px`);
-  root.setProperty("--filter-tabs-sticky-top", `${topbarHeight + toolbarHeight + profileTabsHeight}px`);
-  root.setProperty("--read-action-sticky-top", `${topbarHeight + toolbarHeight + profileTabsHeight + filterTabsHeight}px`);
+  root.setProperty("--filter-tabs-sticky-top", `${topbarHeight + toolbarHeight + profileTabsHeight + listTabsHeight}px`);
+  root.setProperty("--read-action-sticky-top", `${topbarHeight + toolbarHeight + profileTabsHeight + listTabsHeight + filterTabsHeight}px`);
 }
 
 window.addEventListener("resize", updateStickyOffsets);
@@ -639,9 +957,10 @@ async function init() {
     document.getElementById("profileTabBrowse").addEventListener("click", () => showProfileTab("browse"));
   } else {
     initProfilesAdminUI(); // 관리자 화면에서만 - PROFILES_ENABLED 켜져 있으면 섹션을 보여줌
+    initListTabs(); // 정주행 중 / 나중에 읽기 탭도 관리자 화면에서만
   }
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
-  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), loadSortSetting(), fetchScanStatus()]);
+  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), loadSortSettings(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (IS_PROFILE_VIEW) {
     try {
@@ -759,11 +1078,11 @@ searchInput.addEventListener("input", (e) => {
   }
 });
 sortSelect.addEventListener("change", (e) => {
-  sortMode = e.target.value;
-  fetch(`/api/settings/${SORT_KEY}`, {
+  sortModes[activeList] = e.target.value; // 지금 보고 있는 탭의 정렬만 바뀐다
+  fetch(`/api/settings/${sortKeyOf(activeList)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value: sortMode }),
+    body: JSON.stringify({ value: sortModes[activeList] }),
   });
   render();
 });
@@ -1111,6 +1430,7 @@ function positionChapterSidebarList(chapters) {
 
 async function openChapterSidebar(series) {
   chapterSidebarTitle.textContent = series.title;
+  updateSidebarMoveButton(series);
   chapterSidebarList.style.display = ""; // 둘러보기 정보 화면에서 숨겨뒀을 수 있으니 복원
   chapterSidebarList.innerHTML = `<div class="picker-loading">불러오는 중...</div>`;
   chapterSidebar.classList.add("open");

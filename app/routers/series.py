@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import access_control, catalog, db, profiles as profiles_module, scan, services
+from .. import access_control, catalog, db, profiles as profiles_module, scan, series_lists, services
 
 router = APIRouter()
 
@@ -23,6 +23,8 @@ router = APIRouter()
 def list_series(request: Request):
     profile = access_control.get_profile(request)
     allowed_ids = profiles_allowed_ids(profile)
+    # 관리자일 때만 필요하고, 시리즈마다 DB를 읽지 않도록 한 번만 읽어 둔다
+    later_ids = db.get_later_series_ids() if profile is None else set()
 
     result = []
     for series in catalog.get_series_map().values():
@@ -53,18 +55,20 @@ def list_series(request: Request):
             last_label = services.chapter_number_part(chapters[-1]["label"])
             progress_display = f"{current_label}/{last_label}"
 
-        result.append(
-            {
-                "id": series["id"],
-                "platform": series["platform"],
-                "title": series["title"],
-                "chapter_count": total,
-                "unread_count": unread,
-                "progress_display": progress_display,
-                "latest_update": series["latest_mtime"],
-                "cover_url": f"{access_control.profile_path_prefix(profile)}/api/series/{series['id']}/cover",
-            }
-        )
+        item = {
+            "id": series["id"],
+            "platform": series["platform"],
+            "title": series["title"],
+            "chapter_count": total,
+            "unread_count": unread,
+            "progress_display": progress_display,
+            "latest_update": series["latest_mtime"],
+            "cover_url": f"{access_control.profile_path_prefix(profile)}/api/series/{series['id']}/cover",
+        }
+        if profile is None:
+            # 관리자 개인 정리 상태라, 공유 프로필 응답에는 아예 넣지 않는다
+            item["list"] = series_lists.list_name_of(series["id"], later_ids)
+        result.append(item)
     result.sort(key=lambda item: (item["platform"], item["title"]))
     return result
 

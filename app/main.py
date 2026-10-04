@@ -38,7 +38,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, services
-from .routers import backup, chapters, library, series, settings
+from .routers import backup, chapters, library, series, series_lists, settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("webtoon-server")
@@ -251,6 +251,7 @@ async def startup_scan():
 
 app.include_router(library.router)
 app.include_router(series.router)
+app.include_router(series_lists.router)
 app.include_router(chapters.router)
 app.include_router(settings.router)
 app.include_router(backup.router)
