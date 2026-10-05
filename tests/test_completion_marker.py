@@ -56,5 +56,6 @@ def test_completion_marker_removed_from_inside_parens_leaves_no_dangling_space()
 def test_completion_marker_alone_in_parens_removes_empty_parens():
     """GIVEN 완결 표시가 괄호 안에 단독으로 있을 때(예: "(완결)")"""
     _, label = parse_chapter_label("0447_444화 (완결)#188")
-    """THEN 완결을 지운 뒤 텅 빈 "()"까지 같이 정리되고, 끝에 "완결"만 남는다"""
-    assert label == "444화 · 완결"
+    """THEN 완결을 지운 뒤 텅 빈 "()"까지 같이 정리되고, "444화 완결"로 표시된다(번호와 완결
+    표시 사이에 구분점 "·"을 두지 않는다)"""
+    assert label == "444화 완결"

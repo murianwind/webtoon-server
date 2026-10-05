@@ -8,7 +8,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException, Request
 
-from .. import access_control, access_requests, catalog, discord_notify, profiles
+from .. import access_control, access_requests, catalog, covers, discord_notify, profiles
 
 router = APIRouter()
 
@@ -44,7 +44,7 @@ def browse(request: Request):
                 "id": series["id"],
                 "platform": series["platform"],
                 "title": series["title"],
-                "cover_url": f"{access_control.profile_path_prefix(profile)}/api/series/{series['id']}/cover",
+                "cover_url": covers.cover_url(series, access_control.profile_path_prefix(profile)),
                 "request_status": status,  # None | "pending" | "rejected"
             }
         )

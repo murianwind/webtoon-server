@@ -4,6 +4,7 @@
 리사이즈+JPEG 압축한 결과를 원본 mtime 기준으로 캐싱해서 재사용한다.
 """
 
+import hashlib
 import io
 import logging
 import os
@@ -25,6 +26,28 @@ IMAGE_MEDIA_TYPES = {
 
 # series_id -> (source_mtime, jpeg_bytes, media_type)
 _cache: dict[str, tuple[float, bytes, str]] = {}
+
+
+def cover_version(series: dict) -> str:
+    """커버가 바뀌었는지를 알려주는 짧은 값. 커버 주소에 ?v=로 붙여서, 커버가 바뀌면
+    주소도 바뀌게 한다.
+
+    커버 응답은 브라우저가 7일 동안 캐싱한다(main.py). 서버는 원본이 바뀌면 자기 캐시를
+    정확히 갱신하지만, 브라우저는 그걸 알 수 없고 주소가 같으면 요청 자체를 안 한다 -
+    그래서 새 cover.jpg를 넣고 재스캔해도 새로고침으로는 옛 커버가 계속 보였다. 주소가
+    바뀌면 브라우저는 새 주소를 처음 보는 것으로 알고 바로 받아간다(안 바뀐 커버는 주소가
+    그대로라 7일 캐시를 계속 쓴다).
+
+    수정시각만 보면 새 cover.jpg가 첫 회차 zip과 우연히 같은 시각일 때 구분이 안 되므로,
+    커버 원본 파일 경로도 같이 반영한다.
+    """
+    key = f"{series.get('cover_path') or ''}|{series.get('cover_mtime', 0)}"
+    return hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
+
+
+def cover_url(series: dict, path_prefix: str = "") -> str:
+    """이 시리즈의 커버 주소(공유 프로필이면 /p/<토큰> 접두사 포함, 버전 포함)."""
+    return f"{path_prefix}/api/series/{series['id']}/cover?v={cover_version(series)}"
 
 
 def get_cached_cover(series_id: str, source_mtime: float) -> tuple[bytes, str] | None:

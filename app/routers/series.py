@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import access_control, catalog, db, profiles as profiles_module, scan, series_lists, services
+from .. import access_control, catalog, covers, db, profiles as profiles_module, scan, series_lists, services
 
 router = APIRouter()
 
@@ -63,7 +63,7 @@ def list_series(request: Request):
             "unread_count": unread,
             "progress_display": progress_display,
             "latest_update": series["latest_mtime"],
-            "cover_url": f"{access_control.profile_path_prefix(profile)}/api/series/{series['id']}/cover",
+            "cover_url": covers.cover_url(series, access_control.profile_path_prefix(profile)),
         }
         if profile is None:
             # 관리자 개인 정리 상태라, 공유 프로필 응답에는 아예 넣지 않는다

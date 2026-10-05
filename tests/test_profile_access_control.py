@@ -74,7 +74,8 @@ def test_profile_cover_url_is_prefixed_with_profile_path(profile_setup):
     거치므로, 서버가 애초에 이 경로로 내려줘야 그 프로필 범위 안에서 계속 열린다"""
     cover_url = r.json()[0]["cover_url"]
     assert cover_url.startswith("/p/")
-    assert cover_url.endswith("/cover")
+    # 뒤에 붙는 ?v=<버전>은 커버가 바뀌면 브라우저가 새로 받게 하는 값이라 경로만 비교한다
+    assert cover_url.split("?")[0].endswith("/cover")
 
 
 def test_profile_cannot_access_blocked_series_directly(profile_setup):

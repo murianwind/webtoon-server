@@ -68,23 +68,68 @@ def _clean_title(text: str, strip_trailing_hash: bool = True) -> str:
     return text
 
 
-def _normalize_completion_marker(label: str) -> str:
-    """라벨 안에 완결 표시((完)/(완)/완결)가 있으면 그 표시를 지우고, 라벨 맨 끝에
-    "완결"을 딱 한 번만 다시 붙여서 위치와 표기를 통일한다. 표시가 여러 개
-    겹쳐 있어도(예: "(完) ... 완결") 결과에는 항상 끝에 하나만 남는다. 완결
-    표시가 아예 없으면 그대로 돌려준다.
+_PAREN_COMPLETION = re.compile(r"\(\s*(?:完|완결|완)\s*\)")  # (完) (완) (완결)
 
-    완결 표시를 지우고 나면 그 자리에 흔적이 남을 수 있다 - "(2부 완결)"처럼
-    괄호 "안"에서만 지워지면 "(2부 )"처럼 닫는 괄호 앞에 공백이 남고, "(완결)"처럼
-    괄호 안이 통째로 지워지면 "()"처럼 빈 괄호만 남는다. 둘 다 정리한다."""
-    if not re.search(r"\(完\)|\(완\)|완결", label):
+
+def _inside_parens(text: str, index: int) -> bool:
+    return text.count("(", 0, index) > text.count(")", 0, index)
+
+
+def _normalize_completion_marker(label: str) -> str:
+    """라벨의 완결 표시를 지우고, 라벨 맨 끝에 "완결"을 딱 한 번만 다시 붙여서 위치와
+    표기를 통일한다. 표시가 여러 개 겹쳐 있어도(예: "(完) ... 완결") 결과엔 끝에 하나만 남고,
+    완결 표시가 없으면 라벨을 그대로 돌려준다.
+
+    무엇을 "완결 표시"로 볼지가 중요하다. 아래 둘만 표시로 보고, 그 밖의 "완결"은 제목의
+    일부(예: "완결 후기")라서 건드리지 않는다 - 안 그러면 "완결 후기"가 "후기 완결"로 바뀐다.
+      - 괄호로 감싼 표기: (完) (완) (완결)
+      - 단어 "완결"이 라벨 맨 끝에 있거나, 다른 글자와 같은 괄호 안에 있는 경우("(2부 완결)")
+
+    지운 자리에 남는 흔적도 정리한다: "(2부 )"의 공백, "()" 빈 괄호, "444화 ·"의 구분점.
+    """
+    found = False
+
+    if _PAREN_COMPLETION.search(label):
+        found = True
+        label_without_marker = _PAREN_COMPLETION.sub("", label)
+    else:
+        label_without_marker = label
+
+    pieces = []
+    position = 0
+    for match in re.finditer("완결", label_without_marker):
+        at_end = not label_without_marker[match.end():].strip()
+        if at_end or _inside_parens(label_without_marker, match.start()):
+            found = True
+            pieces.append(label_without_marker[position:match.start()])
+            position = match.end()
+    pieces.append(label_without_marker[position:])
+
+    if not found:
         return label
-    cleaned = re.sub(r"\(完\)|\(완\)|완결", "", label)
+
+    cleaned = "".join(pieces)
     cleaned = re.sub(r"\(\s*\)", "", cleaned)  # 안이 통째로 비게 된 괄호 "()" 제거
     cleaned = re.sub(r"\(\s+", "(", cleaned)  # 여는 괄호 뒤에 남은 공백 제거
     cleaned = re.sub(r"\s+\)", ")", cleaned)  # 닫는 괄호 앞에 남은 공백 제거
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -_·")
     return f"{cleaned} 완결" if cleaned else "완결"
+
+
+def _unwrap_annotation(suffix: str) -> tuple[str, bool]:
+    """회차 번호 바로 뒤에 붙은 "덧붙임"인지 확인하고, 맞으면 표시용으로 다듬어 돌려준다.
+    덧붙임은 진짜 부제와 달리 번호에 그냥 공백으로 붙여 쓴다("152화 후기").
+
+      - "+ 후기"            -> ("후기", True)      보너스 표기의 "+"는 뺀다
+      - "(시즌2 마지막화)"   -> ("시즌2 마지막화", True)  통째로 괄호로 감싼 설명은 괄호를 푼다
+      - "아스라이 스러지는"   -> (그대로, False)    진짜 부제 - 호출한 쪽이 " · "로 잇는다
+    """
+    if suffix.startswith("+"):
+        return suffix.lstrip("+ ").strip(), True
+    wrapped = re.fullmatch(r"\(([^()]*)\)", suffix)
+    if wrapped:
+        return wrapped.group(1).strip(), True
+    return suffix, False
 
 
 _SEPARATOR_CLASS = r"[\s：:\-–—·‧․・,]*"
@@ -167,8 +212,9 @@ def _parse_chapter_label_raw(stem: str, series_name: str = "") -> tuple[int, str
         prefix = _clean_title(content[: marker_match.start()], strip_trailing_hash=False)
         suffix = _clean_title(content[marker_match.end():])
         label = f"{prefix} {marker}" if prefix else marker
+        suffix, is_annotation = _unwrap_annotation(suffix)
         if suffix:
-            label = f"{label} · {suffix}"
+            label = f"{label}{' ' if is_annotation else ' · '}{suffix}"
         return sort_key, label
 
     if not is_underscore_style:
