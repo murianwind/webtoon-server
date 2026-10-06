@@ -229,7 +229,6 @@ const SORT_KEY_LATER = "sort_mode_later"; // 나중에 읽기 탭의 정렬(탭�
 const SORT_VALUES = ["latest", "unread", "title"];
 const LIST_READING = "reading"; // 정주행 중 - 기본값이라 아무것도 안 한 시리즈는 전부 여기
 const LIST_LATER = "later"; // 나중에 읽기
-const LIST_LABELS = { [LIST_READING]: "정주행 중", [LIST_LATER]: "나중에 읽기" };
 const LIST_MOVE_PHRASE = { [LIST_READING]: "정주행 중으로", [LIST_LATER]: "나중에 읽기로" };
 const LONG_PRESS_MS = 500;
 const ACTIVE_TAB_KEY = "active_tab"; // 프로필 화면의 "내 웹툰"/"둘러보기" 중 마지막으로 보던 탭
@@ -406,35 +405,11 @@ function renderListTabs(counts, hasQuery) {
   }
 }
 
-function emptyMessage(q, useLists) {
+function emptyMessage(q) {
   if (!allSeries.length) return "스캔된 웹툰이 없습니다.<br>라이브러리 폴더를 확인해주세요.";
-  const where = useLists ? `${LIST_LABELS[activeList]}에는 ` : "";
-  if (q) return `${where}검색 결과가 없습니다.`;
-  if (selectedStatuses.size > 0 || selectedPlatforms.size > 0) return `${where}해당하는 웹툰이 없습니다.`;
-  if (activeList === LIST_LATER) {
-    return "나중에 읽기에 둔 웹툰이 없습니다.<br>웹툰을 길게 누르거나(PC는 우클릭) ○로 선택해서 옮길 수 있어요.";
-  }
-  return "정주행 중인 웹툰이 없습니다.<br>나중에 읽기 탭에서 꺼내올 수 있어요.";
-}
-
-function renderEmptyState(grid, q, counts, useLists) {
-  grid.innerHTML = "";
-  const box = document.createElement("div");
-  box.className = "empty-state";
-  const message = document.createElement("div");
-  message.innerHTML = emptyMessage(q, useLists);
-  box.appendChild(message);
-
-  // 지금 탭엔 없는데 다른 탭에 있으면(검색 포함) 사라진 게 아니라는 걸 알려주고 바로 갈 수 있게
-  const other = otherList(activeList);
-  if (useLists && counts[other] > 0) {
-    const hint = document.createElement("button");
-    hint.className = "empty-state-hint";
-    hint.textContent = `${LIST_LABELS[other]}에서 ${counts[other]}개 찾았어요 ›`;
-    hint.addEventListener("click", () => setActiveList(other));
-    box.appendChild(hint);
-  }
-  grid.appendChild(box);
+  if (q) return "검색 결과가 없습니다.";
+  if (selectedStatuses.size > 0 || selectedPlatforms.size > 0) return "해당하는 웹툰이 없습니다.";
+  return activeList === LIST_LATER ? "나중에 읽기에 둔 웹툰이 없습니다." : "정주행 중인 웹툰이 없습니다.";
 }
 
 function render() {
@@ -449,7 +424,7 @@ function render() {
   visibleSeriesIds = list.map((s) => s.id);
 
   if (!list.length) {
-    renderEmptyState(grid, q, counts, useLists);
+    grid.innerHTML = `<div class="empty-state">${emptyMessage(q)}</div>`;
     return;
   }
 

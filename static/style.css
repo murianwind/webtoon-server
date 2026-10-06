@@ -638,6 +638,7 @@ a {
 }
 
 .empty-state {
+  grid-column: 1 / -1; /* 카드 격자 안에서도 한 칸에 갇히지 않고 전체 폭에 한 줄로 */
   padding: 60px 20px;
   text-align: center;
   color: var(--text-dim);
@@ -1340,20 +1341,6 @@ a {
 .list-tab-count.hit {
   background: var(--accent);
   color: #0a1a12;
-}
-
-/* 비어있는 목록 안내 + 다른 탭에 결과가 있을 때 바로가기 */
-.empty-state-hint {
-  display: block;
-  margin: 20px auto 0;
-  padding: 14px 18px;
-  min-height: 44px;
-  border-radius: 12px;
-  border: 1px solid var(--accent);
-  background: rgba(41, 209, 127, 0.1);
-  color: var(--text);
-  font-size: 15px;
-  cursor: pointer;
 }
 
 /* ---------- 카드 길게 누르기(모바일) / 우클릭(PC) 이동 메뉴 ---------- */

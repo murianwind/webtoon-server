@@ -85,7 +85,8 @@ def _normalize_completion_marker(label: str) -> str:
       - 괄호로 감싼 표기: (完) (완) (완결)
       - 단어 "완결"이 라벨 맨 끝에 있거나, 다른 글자와 같은 괄호 안에 있는 경우("(2부 완결)")
 
-    지운 자리에 남는 흔적도 정리한다: "(2부 )"의 공백, "()" 빈 괄호, "444화 ·"의 구분점.
+    지운 자리에 남는 흔적도 정리한다: "(2부 )"의 공백, "()" 빈 괄호, 파일명에 원래 있던
+    "444화 ·" 같은 구분점.
     """
     found = False
 
@@ -116,20 +117,19 @@ def _normalize_completion_marker(label: str) -> str:
     return f"{cleaned} 완결" if cleaned else "완결"
 
 
-def _unwrap_annotation(suffix: str) -> tuple[str, bool]:
-    """회차 번호 바로 뒤에 붙은 "덧붙임"인지 확인하고, 맞으면 표시용으로 다듬어 돌려준다.
-    덧붙임은 진짜 부제와 달리 번호에 그냥 공백으로 붙여 쓴다("152화 후기").
+def _unwrap_annotation(suffix: str) -> str:
+    """회차 번호 바로 뒤에 붙은 "덧붙임"을 표시용으로 다듬어 돌려준다.
 
-      - "+ 후기"            -> ("후기", True)      보너스 표기의 "+"는 뺀다
-      - "(시즌2 마지막화)"   -> ("시즌2 마지막화", True)  통째로 괄호로 감싼 설명은 괄호를 푼다
-      - "아스라이 스러지는"   -> (그대로, False)    진짜 부제 - 호출한 쪽이 " · "로 잇는다
+      - "+ 후기"            -> "후기"            보너스 표기의 "+"는 뺀다
+      - "(시즌2 마지막화)"   -> "시즌2 마지막화"   통째로 괄호로 감싼 설명은 괄호를 푼다
+      - "아스라이 스러지는"   -> 그대로
     """
     if suffix.startswith("+"):
-        return suffix.lstrip("+ ").strip(), True
+        return suffix.lstrip("+ ").strip()
     wrapped = re.fullmatch(r"\(([^()]*)\)", suffix)
     if wrapped:
-        return wrapped.group(1).strip(), True
-    return suffix, False
+        return wrapped.group(1).strip()
+    return suffix
 
 
 _SEPARATOR_CLASS = r"[\s：:\-–—·‧․・,]*"
@@ -165,7 +165,7 @@ def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
     한 번 더 적용한다(어느 파싱 경로를 타든 결과가 일관되게 처리되도록).
 
     예)
-      "103 마법사랑해 100화 - 아스라이 스러지는 (7)" -> (103, "100화 · 아스라이 스러지는 7")
+      "103 마법사랑해 100화 - 아스라이 스러지는 (7)" -> (103, "100화 아스라이 스러지는 7")
       "172 나이트런 Extra story - 1화" (series=나이트런) -> (172, "Extra story 1화")
       "651 신의 탑 3부 233화" (series=신의 탑)          -> (651, "3부 233화")
       "0004_1화#64"                                  -> (4,   "1화")
@@ -173,7 +173,7 @@ def parse_chapter_label(stem: str, series_name: str = "") -> tuple[int, str]:
       "104 마법사랑해 번외편 - 르네의 일기"           -> (104, "번외편 - 르네의 일기")
       "117 기기괴괴2 절멸의 도시 #2" (series=기기괴괴2) -> (117, "절멸의 도시 2")
       "017 로도스도 전기  사령의 여왕 제16화 ..." (series="로도스도 전기 ： 사령의 여왕")
-                                                     -> (17, "16화 · ...")
+                                                     -> (17, "16화 ...")
       "049 퇴마록 세계편 세크메트의 분노 (完) 시즌1 완결" (series=퇴마록 : 세계편)
                                                      -> (49, "세크메트의 분노 시즌1 완결")
     """
@@ -212,9 +212,9 @@ def _parse_chapter_label_raw(stem: str, series_name: str = "") -> tuple[int, str
         prefix = _clean_title(content[: marker_match.start()], strip_trailing_hash=False)
         suffix = _clean_title(content[marker_match.end():])
         label = f"{prefix} {marker}" if prefix else marker
-        suffix, is_annotation = _unwrap_annotation(suffix)
+        suffix = _unwrap_annotation(suffix)
         if suffix:
-            label = f"{label}{' ' if is_annotation else ' · '}{suffix}"
+            label = f"{label} {suffix}"  # 부제든 덧붙임이든 구분점 없이 공백으로 잇는다
         return sort_key, label
 
     if not is_underscore_style:

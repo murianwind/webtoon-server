@@ -11,6 +11,7 @@ import asyncio
 import concurrent.futures
 import logging
 import os
+import re
 from datetime import datetime
 
 from croniter import croniter
@@ -70,8 +71,15 @@ async def run_platform_io(platform: str, func, *args):
 
 
 def chapter_number_part(label: str) -> str:
-    """라벨에서 제목 부분(' · ' 뒤)을 떼고 회차 번호 부분만 반환."""
-    return label.split(" · ", 1)[0]
+    """라벨에서 부제/덧붙임을 떼고 회차 번호 부분만 반환한다(목록 카드의 "1화/32화" 표시용).
+
+    라벨은 "[번호 앞 부제] N화 [뒤 부제]" 형태라서(예: "Extra story 1화", "100화 아스라이
+    스러지는"), 첫 "N화"까지가 번호 부분이다. "N화"가 없는 라벨("프롤로그", "Ep 1-1. BRAVE
+    MAN")은 통째로가 번호 부분이다. 예전에는 번호와 부제 사이의 " · "를 기준으로 잘랐지만,
+    이제 라벨에 구분점이 없으므로 번호 패턴으로 찾는다.
+    """
+    match = re.match(r".*?\d+화", label)
+    return match.group(0) if match else label
 
 
 def resolve_read_index(chapters: list, prog: dict | None) -> int:
