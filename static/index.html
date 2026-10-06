@@ -272,6 +272,75 @@ const filtersByList = {
 function currentFilters() {
   return filtersByList[activeList]; // 지금 보고 있는 탭의 필터
 }
+
+// ---------------------------------------------------------------------
+// 직전 화면 저장/복원 (새로고침 직후 첫 화면용)
+//
+// 목록, 필터, 정렬, 플랫폼 칩, 마지막 스캔 시각은 전부 서버에서 받아와야 알 수 있는 값이라, 새로고침하면
+// 응답이 올 때까지 기본값(전체 선택)이 보이거나 아예 비어 있다가 바뀌는 깜빡임이 생긴다. 그래서
+// 마지막으로 본 화면 상태를 브라우저에 저장해 두고, 새로고침하면 그걸로 첫 화면을 바로 그린 뒤
+// 서버 값이 오면 조용히 갱신한다(서버 값이 항상 우선). 관리자/프로필별로 따로 저장한다.
+// ---------------------------------------------------------------------
+
+const BOOT_CACHE_VERSION = 1;
+const BOOT_CACHE_KEY = `webtoon:index:boot:${PROFILE_TOKEN || "admin"}`;
+let bootCacheSaveEnabled = false; // 서버 값을 한 번 받은 뒤에만 켠다(덜 불러온 상태를 저장하지 않도록)
+let bootCacheSaveTimer = null;
+
+function saveBootCache() {
+  try {
+    const filters = {};
+    for (const [list, f] of Object.entries(filtersByList)) {
+      filters[list] = { statuses: [...f.statuses], platforms: [...f.platforms] };
+    }
+    localStorage.setItem(BOOT_CACHE_KEY, JSON.stringify({
+      v: BOOT_CACHE_VERSION,
+      series: allSeries,
+      filters,
+      sortModes,
+      knownPlatforms,
+      lastScanText: document.getElementById("scanStatusText").textContent,
+    }));
+  } catch (e) {
+    // 용량 초과/저장소 사용 불가 환경이면 이 기능만 포기한다(화면 동작에는 지장 없음)
+  }
+}
+
+// 화면이 다시 그려질 때마다 부르되, 짧은 간격의 연속 호출은 한 번으로 모아서 저장한다
+function scheduleBootCacheSave() {
+  if (!bootCacheSaveEnabled) return;
+  clearTimeout(bootCacheSaveTimer);
+  bootCacheSaveTimer = setTimeout(saveBootCache, 400);
+}
+
+// 저장된 직전 화면을 상태 변수에 되살린다. 성공하면 true(저장된 게 없거나 형식이 다르면 false)
+function applyBootCache() {
+  try {
+    const cache = JSON.parse(localStorage.getItem(BOOT_CACHE_KEY) || "null");
+    if (!cache || cache.v !== BOOT_CACHE_VERSION || !Array.isArray(cache.series)) return false;
+    allSeries = cache.series;
+    for (const list of [LIST_READING, LIST_LATER]) {
+      const saved = (cache.filters || {})[list];
+      if (saved) {
+        filtersByList[list].statuses = new Set((saved.statuses || []).filter((v) => STATUS_VALUES.includes(v)));
+        filtersByList[list].platforms = new Set(saved.platforms || []);
+      }
+      const mode = (cache.sortModes || {})[list];
+      if (SORT_VALUES.includes(mode)) sortModes[list] = mode;
+    }
+    knownPlatforms = cache.knownPlatforms || [];
+    document.getElementById("scanStatusText").textContent = cache.lastScanText || "";
+    sortSelect.value = sortModes[activeList];
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 이 페이지를 떠나는 순간(새로고침 포함) 마지막 상태를 바로 저장해서, 방금 바꾼 필터도 놓치지 않는다
+window.addEventListener("pagehide", () => {
+  if (bootCacheSaveEnabled) saveBootCache();
+});
 let knownPlatforms = []; // /library 바로 아래 폴더 이름 전체 (아직 스캔 안 끝난 것도 포함)
 
 let selectedIds = new Set(); // 다중 선택
@@ -326,6 +395,7 @@ function savePlatformFilterSetting() {
 }
 
 function renderFilterTabs() {
+  scheduleBootCacheSave();
   const container = document.getElementById("filterTabs");
   const filters = currentFilters(); // 탭을 바꾸면 이 함수를 다시 불러서 그 탭의 필터로 그린다
   container.innerHTML = "";
@@ -444,6 +514,7 @@ function emptyMessage(q) {
 }
 
 function render() {
+  scheduleBootCacheSave();
   const grid = document.getElementById("grid");
   const q = query.trim().toLowerCase();
   const useLists = !IS_PROFILE_VIEW; // 목록 구분은 관리자 개인 정리용 - 프로필 화면엔 없다
@@ -974,10 +1045,9 @@ function updateStickyOffsets() {
 
 window.addEventListener("resize", updateStickyOffsets);
 
-// 첫 로딩 동안엔 서버 값을 모르니, 기본값(전체 필터, 기본 정렬)이 잠깐 보였다가 저장된 값으로
-// 바뀌는 깜빡임이 없도록 가려둔다. 실패해도 영구히 가려지지 않게 finally에서 푼다.
+// 처음 방문처럼 저장된 직전 화면이 없을 때만, 서버 값이 오기 전의 기본값(전체 필터, 기본 정렬)이
+// 잠깐 보였다가 바뀌지 않게 가려둔다. 실패해도 영구히 가려지지 않게 finally에서 푼다.
 async function init() {
-  document.body.classList.add("state-pending");
   try {
     await initState();
   } finally {
@@ -996,7 +1066,14 @@ async function initState() {
     initProfilesAdminUI(); // 관리자 화면에서만 - PROFILES_ENABLED 켜져 있으면 섹션을 보여줌
     initListTabs(); // 정주행 중 / 나중에 읽기 탭도 관리자 화면에서만
   }
-  renderFilterTabs(); // 기본값(전체)으로 우선 표시
+  if (applyBootCache()) {
+    // 새로고침 직후에도 직전 화면 그대로 바로 그린다(서버 값이 오면 아래에서 조용히 갱신)
+    renderFilterTabs();
+    render();
+  } else {
+    document.body.classList.add("state-pending");
+    renderFilterTabs();
+  }
   const [ok] = await Promise.all([fetchSeries(), loadFilterSettings(), loadSortSettings(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (IS_PROFILE_VIEW) {
@@ -1008,7 +1085,11 @@ async function initState() {
       // 실패 시 기본값("내 웹툰") 유지
     }
   }
-  if (ok) render();
+  if (ok) {
+    render();
+    bootCacheSaveEnabled = true; // 서버 값을 제대로 받았으니 이제부터 현재 화면 상태를 저장한다
+    saveBootCache();
+  }
   updateStickyOffsets();
   maybeStartScanPolling();
 }
