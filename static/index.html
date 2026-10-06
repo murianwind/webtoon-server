@@ -226,6 +226,7 @@ const FILTER_KEY = "status_filter"; // 서버(app_settings)에 저장 -> 모든 
 const PLATFORM_FILTER_KEY = "platform_filter"; // 위와 같은 이유로 서버에 저장
 const SORT_KEY = "sort_mode"; // 위와 같은 이유로 서버에 저장(검색어는 입력마다 바뀌어서 과하니 localStorage 유지)
 const SORT_KEY_LATER = "sort_mode_later"; // 나중에 읽기 탭의 정렬(탭별로 따로 기억)
+const ACTIVE_LIST_SESSION_KEY = "webtoon:index:activeList"; // 보던 탭(새로고침/뒤로가기에도 유지)
 const SORT_VALUES = ["latest", "unread", "title"];
 const LIST_READING = "reading"; // 정주행 중 - 기본값이라 아무것도 안 한 시리즈는 전부 여기
 const LIST_LATER = "later"; // 나중에 읽기
@@ -241,15 +242,36 @@ const STATUS_VALUES = STATUS_OPTIONS.map((o) => o.value);
 
 let allSeries = [];
 let query = localStorage.getItem(LS_QUERY) || "";
-// 앱은 항상 정주행 중에서 시작한다(마지막에 본 탭을 일부러 저장하지 않음) - 나중에 읽기는
-// 의식적으로 열어야 보이는 "서랍"이라서, 열 때마다 아껴둔 웹툰이 눈에 들어오지 않게 한다.
-let activeList = LIST_READING;
+// 보던 탭은 새로고침/뒤로가기에도 유지된다(sessionStorage). 다만 앱을 완전히 새로 열면(새
+// 세션) 항상 정주행 중에서 시작한다 - 나중에 읽기는 의식적으로 열어야 보이는 "서랍"이라서.
+function restoreActiveList() {
+  try {
+    return sessionStorage.getItem(ACTIVE_LIST_SESSION_KEY) === LIST_LATER ? LIST_LATER : LIST_READING;
+  } catch (e) {
+    return LIST_READING; // 저장소를 못 쓰는 환경이면 기본값
+  }
+}
+function rememberActiveList(list) {
+  try {
+    sessionStorage.setItem(ACTIVE_LIST_SESSION_KEY, list);
+  } catch (e) {
+    // 저장 못 해도 화면 동작에는 지장 없음
+  }
+}
+let activeList = IS_PROFILE_VIEW ? LIST_READING : restoreActiveList();
 // 탭별 정렬(서버에서 로드). 나중에 읽기는 최근 업데이트순이면 새 회차가 올라온 웹툰이
 // 계속 맨 위로 올라와 유혹이 되므로 제목순이 기본이다.
 let sortModes = { [LIST_READING]: "latest", [LIST_LATER]: "title" };
 let visibleSeriesIds = []; // 지금 화면에 보이는 웹툰 ID들(보이는 웹툰 전체 선택용)
-let selectedStatuses = new Set(); // 비어있으면 "전체" (서버에서 로드되기 전까지의 기본값)
-let selectedPlatforms = new Set(); // 비어있으면 "전체 플랫폼", 여러 개 동시 선택 가능
+// 필터는 탭(정주행 중 / 나중에 읽기)마다 따로 가진다. statuses가 비어있으면 "전체", platforms가
+// 비어있으면 "전체 플랫폼"(여러 개 동시 선택 가능). 서버에서 로드되기 전까지의 기본값은 전체.
+const filtersByList = {
+  [LIST_READING]: { statuses: new Set(), platforms: new Set() },
+  [LIST_LATER]: { statuses: new Set(), platforms: new Set() },
+};
+function currentFilters() {
+  return filtersByList[activeList]; // 지금 보고 있는 탭의 필터
+}
 let knownPlatforms = []; // /library 바로 아래 폴더 이름 전체 (아직 스캔 안 끝난 것도 포함)
 
 let selectedIds = new Set(); // 다중 선택
@@ -274,9 +296,19 @@ function seriesStatus(s) {
   return "reading"; // 일부만 읽음
 }
 
+// 필터는 탭마다 서버에 따로 저장한다. 정주행 중은 예전 키 그대로라서, 업데이트해도 이미
+// 선택해 둔 필터가 그대로 정주행 중 탭의 필터가 된다.
+function filterKeyOf(list) {
+  return list === LIST_LATER ? `${FILTER_KEY}_later` : FILTER_KEY;
+}
+function platformFilterKeyOf(list) {
+  return list === LIST_LATER ? `${PLATFORM_FILTER_KEY}_later` : PLATFORM_FILTER_KEY;
+}
+
 function saveFilterSetting() {
-  const value = selectedStatuses.size === 0 ? "all" : [...selectedStatuses].join(",");
-  fetch(`/api/settings/${FILTER_KEY}`, {
+  const { statuses } = currentFilters();
+  const value = statuses.size === 0 ? "all" : [...statuses].join(",");
+  fetch(`/api/settings/${filterKeyOf(activeList)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
@@ -284,35 +316,26 @@ function saveFilterSetting() {
 }
 
 function savePlatformFilterSetting() {
-  const value = selectedPlatforms.size === 0 ? "" : [...selectedPlatforms].join(",");
-  fetch(`/api/settings/${PLATFORM_FILTER_KEY}`, {
+  const { platforms } = currentFilters();
+  const value = platforms.size === 0 ? "" : [...platforms].join(",");
+  fetch(`/api/settings/${platformFilterKeyOf(activeList)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
   }).catch(() => {});
 }
 
-async function loadPlatformFilterSetting() {
-  try {
-    const res = await fetch(`/api/settings/${PLATFORM_FILTER_KEY}`);
-    const data = await res.json();
-    const parts = (data.value || "").split(",").filter(Boolean);
-    selectedPlatforms = new Set(parts);
-  } catch (e) {
-    // 못 받아와도 기본값(전체)으로 계속 진행
-  }
-}
-
 function renderFilterTabs() {
   const container = document.getElementById("filterTabs");
+  const filters = currentFilters(); // 탭을 바꾸면 이 함수를 다시 불러서 그 탭의 필터로 그린다
   container.innerHTML = "";
 
   const allBtn = document.createElement("button");
-  allBtn.className = "filter-tab" + (selectedStatuses.size === 0 ? " active" : "");
+  allBtn.className = "filter-tab" + (filters.statuses.size === 0 ? " active" : "");
   allBtn.textContent = "전체";
   allBtn.addEventListener("click", () => {
-    if (selectedStatuses.size === 0) return;
-    selectedStatuses = new Set();
+    if (filters.statuses.size === 0) return;
+    filters.statuses = new Set();
     renderFilterTabs();
     render();
     saveFilterSetting();
@@ -321,13 +344,13 @@ function renderFilterTabs() {
 
   for (const opt of STATUS_OPTIONS) {
     const btn = document.createElement("button");
-    btn.className = "filter-tab" + (selectedStatuses.has(opt.value) ? " active" : "");
+    btn.className = "filter-tab" + (filters.statuses.has(opt.value) ? " active" : "");
     btn.textContent = opt.label;
     btn.addEventListener("click", () => {
-      if (selectedStatuses.has(opt.value)) selectedStatuses.delete(opt.value);
-      else selectedStatuses.add(opt.value);
+      if (filters.statuses.has(opt.value)) filters.statuses.delete(opt.value);
+      else filters.statuses.add(opt.value);
       // 세 상태를 전부 선택한 상태는 "전체"와 같으므로 자연스럽게 합쳐줌
-      if (selectedStatuses.size === STATUS_OPTIONS.length) selectedStatuses = new Set();
+      if (filters.statuses.size === STATUS_OPTIONS.length) filters.statuses = new Set();
       renderFilterTabs();
       render();
       saveFilterSetting();
@@ -348,13 +371,13 @@ function renderFilterTabs() {
 
     for (const platform of [...platformSet].sort((a, b) => a.localeCompare(b, "ko"))) {
       const btn = document.createElement("button");
-      btn.className = "filter-tab platform-filter-tab" + (selectedPlatforms.has(platform) ? " active" : "");
+      btn.className = "filter-tab platform-filter-tab" + (filters.platforms.has(platform) ? " active" : "");
       btn.textContent = platform;
       btn.addEventListener("click", () => {
-        if (selectedPlatforms.has(platform)) selectedPlatforms.delete(platform);
-        else selectedPlatforms.add(platform);
+        if (filters.platforms.has(platform)) filters.platforms.delete(platform);
+        else filters.platforms.add(platform);
         // 전체 플랫폼을 다 선택한 상태는 "전체"와 같으므로 자연스럽게 합쳐줌
-        if (selectedPlatforms.size === platformSet.size) selectedPlatforms = new Set();
+        if (filters.platforms.size === platformSet.size) filters.platforms = new Set();
         renderFilterTabs();
         render();
         savePlatformFilterSetting();
@@ -371,12 +394,13 @@ function listOf(s) {
 
 // 검색 + 상태/플랫폼 필터를 통과한 것(정주행 중/나중에 읽기로 나누기 전)
 function filterSeries(q) {
+  const { statuses, platforms } = currentFilters();
   let filtered = q ? allSeries.filter((s) => s.title.toLowerCase().includes(q)) : allSeries;
-  if (selectedStatuses.size > 0) {
-    filtered = filtered.filter((s) => selectedStatuses.has(seriesStatus(s)));
+  if (statuses.size > 0) {
+    filtered = filtered.filter((s) => statuses.has(seriesStatus(s)));
   }
-  if (selectedPlatforms.size > 0) {
-    filtered = filtered.filter((s) => selectedPlatforms.has(s.platform));
+  if (platforms.size > 0) {
+    filtered = filtered.filter((s) => platforms.has(s.platform));
   }
   return filtered;
 }
@@ -408,7 +432,8 @@ function renderListTabs(counts, hasQuery) {
 function emptyMessage(q) {
   if (!allSeries.length) return "스캔된 웹툰이 없습니다.<br>라이브러리 폴더를 확인해주세요.";
   if (q) return "검색 결과가 없습니다.";
-  if (selectedStatuses.size > 0 || selectedPlatforms.size > 0) return "해당하는 웹툰이 없습니다.";
+  const { statuses, platforms } = currentFilters();
+  if (statuses.size > 0 || platforms.size > 0) return "해당하는 웹툰이 없습니다.";
   return activeList === LIST_LATER ? "나중에 읽기에 둔 웹툰이 없습니다." : "정주행 중인 웹툰이 없습니다.";
 }
 
@@ -544,7 +569,9 @@ function initListTabs() {
 function setActiveList(list) {
   if (list === activeList) return;
   activeList = list;
+  rememberActiveList(list);
   sortSelect.value = sortModes[activeList];
+  renderFilterTabs(); // 필터도 탭마다 따로라서, 칩 표시를 이 탭의 선택 상태로 바꾼다
   window.scrollTo(0, 0);
   clearSelection(); // 다른 탭 웹툰이 선택된 채 남지 않게 정리하고, 목록도 다시 그린다
 }
@@ -787,17 +814,33 @@ document.getElementById("readActionClose").addEventListener("click", clearSelect
 // 로딩 & 검색/정렬 (localStorage에 유지)
 // ---------------------------------------------------------------------
 
-async function loadFilterSetting() {
+async function loadFilterSettingFor(list) {
   try {
-    const res = await fetch(`/api/settings/${FILTER_KEY}`);
+    const res = await fetch(`/api/settings/${filterKeyOf(list)}`);
     const data = await res.json();
     if (data.value && data.value !== "all") {
       const parts = data.value.split(",").filter((v) => STATUS_VALUES.includes(v));
-      selectedStatuses = new Set(parts);
+      filtersByList[list].statuses = new Set(parts);
     }
   } catch (e) {
     // 실패 시 기본값(전체) 유지
   }
+}
+
+async function loadPlatformFilterSettingFor(list) {
+  try {
+    const res = await fetch(`/api/settings/${platformFilterKeyOf(list)}`);
+    const data = await res.json();
+    filtersByList[list].platforms = new Set((data.value || "").split(",").filter(Boolean));
+  } catch (e) {
+    // 못 받아와도 기본값(전체)으로 계속 진행
+  }
+}
+
+async function loadFilterSettings() {
+  // 나중에 읽기 필터는 목록 구분이 있는 관리자 화면에서만 의미가 있다
+  const lists = IS_PROFILE_VIEW ? [LIST_READING] : [LIST_READING, LIST_LATER];
+  await Promise.all(lists.flatMap((list) => [loadFilterSettingFor(list), loadPlatformFilterSettingFor(list)]));
 }
 
 function sortKeyOf(list) {
@@ -935,7 +978,7 @@ async function init() {
     initListTabs(); // 정주행 중 / 나중에 읽기 탭도 관리자 화면에서만
   }
   renderFilterTabs(); // 기본값(전체)으로 우선 표시
-  const [ok] = await Promise.all([fetchSeries(), loadFilterSetting(), loadPlatformFilterSetting(), loadSortSettings(), fetchScanStatus()]);
+  const [ok] = await Promise.all([fetchSeries(), loadFilterSettings(), loadSortSettings(), fetchScanStatus()]);
   renderFilterTabs(); // 서버 값(및 knownPlatforms) 반영해서 다시 그림
   if (IS_PROFILE_VIEW) {
     try {

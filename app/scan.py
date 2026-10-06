@@ -117,19 +117,14 @@ def _normalize_completion_marker(label: str) -> str:
     return f"{cleaned} 완결" if cleaned else "완결"
 
 
-def _unwrap_annotation(suffix: str) -> str:
-    """회차 번호 바로 뒤에 붙은 "덧붙임"을 표시용으로 다듬어 돌려준다.
+def _unwrap_parenthesized(suffix: str) -> str:
+    """번호 바로 뒤에 붙은 설명이 통째로 괄호로 감싸져 있으면 괄호를 푼다.
 
-      - "+ 후기"            -> "후기"            보너스 표기의 "+"는 뺀다
-      - "(시즌2 마지막화)"   -> "시즌2 마지막화"   통째로 괄호로 감싼 설명은 괄호를 푼다
-      - "아스라이 스러지는"   -> 그대로
+      - "(시즌2 마지막화)" -> "시즌2 마지막화"
+      - "+ 후기", "아스라이 스러지는" -> 그대로 ("+" 같은 글자는 파일명에 있는 그대로 둔다)
     """
-    if suffix.startswith("+"):
-        return suffix.lstrip("+ ").strip()
     wrapped = re.fullmatch(r"\(([^()]*)\)", suffix)
-    if wrapped:
-        return wrapped.group(1).strip()
-    return suffix
+    return wrapped.group(1).strip() if wrapped else suffix
 
 
 _SEPARATOR_CLASS = r"[\s：:\-–—·‧․・,]*"
@@ -212,7 +207,7 @@ def _parse_chapter_label_raw(stem: str, series_name: str = "") -> tuple[int, str
         prefix = _clean_title(content[: marker_match.start()], strip_trailing_hash=False)
         suffix = _clean_title(content[marker_match.end():])
         label = f"{prefix} {marker}" if prefix else marker
-        suffix = _unwrap_annotation(suffix)
+        suffix = _unwrap_parenthesized(suffix)
         if suffix:
             label = f"{label} {suffix}"  # 부제든 덧붙임이든 구분점 없이 공백으로 잇는다
         return sort_key, label
