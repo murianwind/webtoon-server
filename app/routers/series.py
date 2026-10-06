@@ -41,6 +41,8 @@ def list_series(request: Request):
         if profile is None:
             prog = db.get_progress(series["id"])
             services.migrate_legacy_progress_if_needed(series["id"], chapters, prog)
+        else:
+            prog = access_control.get_progress(profile, series["id"])
         read_ids = access_control.get_read_chapter_ids(profile, series["id"])
         unread = sum(1 for chapter in chapters if chapter["id"] not in read_ids)
 
@@ -62,6 +64,9 @@ def list_series(request: Request):
             "chapter_count": total,
             "unread_count": unread,
             "progress_display": progress_display,
+            # 이어보기 위치가 저장돼 있으면 읽기 시작한 웹툰이다. 읽음 처리된 회차 수(unread_count)만으로는
+            # 새 웹툰의 1화를 읽는 중인 것을 알 수 없다(회차는 그 앞 회차를 지나가야 읽음이 됨).
+            "started": prog is not None,
             "latest_update": series["latest_mtime"],
             "cover_url": covers.cover_url(series, access_control.profile_path_prefix(profile)),
         }

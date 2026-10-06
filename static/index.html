@@ -360,7 +360,9 @@ function sortSeries(list) {
 }
 
 function seriesStatus(s) {
-  if (s.unread_count >= s.chapter_count) return "unread"; // 아직 한 번도 안 읽음
+  // 읽은 회차가 하나도 없어도, 이어보기 위치가 저장돼 있으면(1화를 읽는 중 등) 읽는 중이다.
+  // 회차는 그 앞 회차를 지나가야 "읽음"이 되므로, 읽음 개수만으로는 새 웹툰을 읽기 시작한 걸 알 수 없다.
+  if (s.unread_count >= s.chapter_count) return s.started ? "reading" : "unread";
   if (s.unread_count === 0) return "done"; // 전부 읽음
   return "reading"; // 일부만 읽음
 }
