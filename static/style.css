@@ -1337,6 +1337,10 @@ a {
   background: rgba(41, 209, 127, 0.16);
   color: var(--accent);
 }
+/* 아직 숫자를 모르는 동안(첫 로딩)엔 "0"이 아니라 아무것도 보이지 않게 */
+.list-tab-count:empty {
+  visibility: hidden;
+}
 /* 검색했는데 지금 탭엔 없고 다른 탭에만 결과가 있을 때, 그쪽 탭 숫자를 눈에 띄게 */
 .list-tab-count.hit {
   background: var(--accent);
@@ -1453,4 +1457,10 @@ a {
 .read-action-grid button.move-act {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* 첫 로딩 중(서버에서 저장된 필터/정렬을 받기 전)엔 기본값이 잠깐 보이지 않게 가려둔다 */
+.state-pending #filterTabs,
+.state-pending #sortSelect {
+  visibility: hidden;
 }

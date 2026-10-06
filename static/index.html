@@ -39,8 +39,8 @@
   </select>
 </div>
 <div id="listTabs" class="list-tabs" role="tablist" aria-label="목록 구분" style="display:none">
-  <button class="list-tab active" role="tab" aria-selected="true" data-list="reading"><span>정주행 중</span><span class="list-tab-count">0</span></button>
-  <button class="list-tab" role="tab" aria-selected="false" data-list="later"><span>나중에 읽기</span><span class="list-tab-count">0</span></button>
+  <button class="list-tab" role="tab" aria-selected="false" data-list="reading"><span>정주행 중</span><span class="list-tab-count"></span></button>
+  <button class="list-tab" role="tab" aria-selected="false" data-list="later"><span>나중에 읽기</span><span class="list-tab-count"></span></button>
 </div>
 <div id="profileViewTabs" class="filter-tabs" style="display:none">
   <button class="filter-tab active" id="profileTabMine">내 웹툰</button>
@@ -392,22 +392,22 @@ function listOf(s) {
   return s.list || LIST_READING; // 서버가 list를 안 내려주는 프로필 화면에서도 전부 "정주행 중"으로 취급
 }
 
-// 검색 + 상태/플랫폼 필터를 통과한 것(정주행 중/나중에 읽기로 나누기 전)
-function filterSeries(q) {
-  const { statuses, platforms } = currentFilters();
-  let filtered = q ? allSeries.filter((s) => s.title.toLowerCase().includes(q)) : allSeries;
-  if (statuses.size > 0) {
-    filtered = filtered.filter((s) => statuses.has(seriesStatus(s)));
-  }
-  if (platforms.size > 0) {
-    filtered = filtered.filter((s) => platforms.has(s.platform));
-  }
-  return filtered;
+// 한 웹툰이 검색어와 주어진 필터(상태/플랫폼)를 모두 통과하는지
+function matchesFilters(s, q, filters) {
+  if (q && !s.title.toLowerCase().includes(q)) return false;
+  if (filters.statuses.size > 0 && !filters.statuses.has(seriesStatus(s))) return false;
+  if (filters.platforms.size > 0 && !filters.platforms.has(s.platform)) return false;
+  return true;
 }
 
-function countByList(items) {
+// 탭 옆 숫자는 각 탭이 "자기 필터"로 센다 - 그래야 그 탭을 눌렀을 때 보이는 개수와 항상 같다.
+// (지금 보는 탭의 필터로 양쪽을 세면, 다른 탭 숫자가 실제와 달라진다. 검색어는 양쪽 공통.)
+function countByList(q) {
   const counts = { [LIST_READING]: 0, [LIST_LATER]: 0 };
-  for (const s of items) counts[listOf(s)] += 1;
+  for (const s of allSeries) {
+    const list = listOf(s);
+    if (matchesFilters(s, q, filtersByList[list])) counts[list] += 1;
+  }
   return counts;
 }
 
@@ -415,17 +415,23 @@ function otherList(list) {
   return list === LIST_LATER ? LIST_READING : LIST_LATER;
 }
 
+function markActiveListTab() {
+  for (const btn of document.querySelectorAll(".list-tab")) {
+    const isActive = btn.dataset.list === activeList;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", String(isActive));
+  }
+}
+
 function renderListTabs(counts, hasQuery) {
+  markActiveListTab();
   const activeIsEmpty = counts[activeList] === 0;
   for (const btn of document.querySelectorAll(".list-tab")) {
     const list = btn.dataset.list;
-    const isActive = list === activeList;
-    btn.classList.toggle("active", isActive);
-    btn.setAttribute("aria-selected", String(isActive));
     const badge = btn.querySelector(".list-tab-count");
     badge.textContent = counts[list];
     // 검색했는데 지금 탭엔 결과가 없고 다른 탭에만 있으면, 그쪽 탭 숫자를 눈에 띄게 한다
-    badge.classList.toggle("hit", !isActive && hasQuery && activeIsEmpty && counts[list] > 0);
+    badge.classList.toggle("hit", list !== activeList && hasQuery && activeIsEmpty && counts[list] > 0);
   }
 }
 
@@ -440,12 +446,13 @@ function emptyMessage(q) {
 function render() {
   const grid = document.getElementById("grid");
   const q = query.trim().toLowerCase();
-  const matches = filterSeries(q);
-  const counts = countByList(matches);
   const useLists = !IS_PROFILE_VIEW; // 목록 구분은 관리자 개인 정리용 - 프로필 화면엔 없다
-  if (useLists) renderListTabs(counts, q !== "");
+  if (useLists) renderListTabs(countByList(q), q !== "");
 
-  const list = sortSeries(useLists ? matches.filter((s) => listOf(s) === activeList) : matches);
+  const filters = currentFilters();
+  const list = sortSeries(
+    allSeries.filter((s) => (!useLists || listOf(s) === activeList) && matchesFilters(s, q, filters))
+  );
   visibleSeriesIds = list.map((s) => s.id);
 
   if (!list.length) {
@@ -561,6 +568,7 @@ function moveToastMessage(count, target) {
 function initListTabs() {
   const tabs = document.getElementById("listTabs");
   tabs.style.display = "flex";
+  markActiveListTab(); // 서버 응답을 기다리지 않고 보던 탭부터 바로 표시(기본 탭이 잠깐 보이지 않게)
   for (const btn of tabs.querySelectorAll(".list-tab")) {
     btn.addEventListener("click", () => setActiveList(btn.dataset.list));
   }
@@ -966,7 +974,18 @@ function updateStickyOffsets() {
 
 window.addEventListener("resize", updateStickyOffsets);
 
+// 첫 로딩 동안엔 서버 값을 모르니, 기본값(전체 필터, 기본 정렬)이 잠깐 보였다가 저장된 값으로
+// 바뀌는 깜빡임이 없도록 가려둔다. 실패해도 영구히 가려지지 않게 finally에서 푼다.
 async function init() {
+  document.body.classList.add("state-pending");
+  try {
+    await initState();
+  } finally {
+    document.body.classList.remove("state-pending");
+  }
+}
+
+async function initState() {
   if (IS_PROFILE_VIEW) {
     document.getElementById("settingsBtn").style.display = "none"; // 관리자 전용 기능이므로 프로필 화면엔 안 보임
     document.getElementById("rescanBtn").style.display = "none"; // 재스캔도 관리자 전용(서버 API 자체도 막혀있음)
