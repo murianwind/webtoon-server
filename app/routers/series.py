@@ -64,9 +64,12 @@ def list_series(request: Request):
             "chapter_count": total,
             "unread_count": unread,
             "progress_display": progress_display,
-            # 이어보기 위치가 저장돼 있으면 읽기 시작한 웹툰이다. 읽음 처리된 회차 수(unread_count)만으로는
-            # 새 웹툰의 1화를 읽는 중인 것을 알 수 없다(회차는 그 앞 회차를 지나가야 읽음이 됨).
-            "started": prog is not None,
+            # 이어보기 위치가 저장돼 있고 그 회차가 지금도 있으면 읽기 시작한 웹툰이다. 읽음 처리된 회차
+            # 수(unread_count)만으로는 새 웹툰의 1화를 읽는 중인 것을 알 수 없다(회차는 그 앞 회차를 지나가야
+            # 읽음이 됨). "지금도 있으면"이 중요하다: 회차 ID는 파일명으로 만들어서, 파일 이름이 바뀌면 저장된
+            # 위치가 목록에 없는 옛 회차를 가리키게 되는데, 이걸 읽기 시작한 것으로 세면 읽음 표시도 읽는 중
+            # 표시도 없는 웹툰이 "읽는 중"으로 분류되고, 사이드바로는 되돌려지지도 않는다.
+            "started": services.resolve_read_index(chapters, prog) >= 0,
             "latest_update": series["latest_mtime"],
             "cover_url": covers.cover_url(series, access_control.profile_path_prefix(profile)),
         }

@@ -9,6 +9,7 @@
 
 import asyncio
 import importlib
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -60,6 +61,39 @@ def test_marking_everything_unread_resets_started(client, one_series):
 
     """THEN 다시 읽기 시작하지 않은 상태가 된다"""
     assert _item(client, sid)["started"] is False
+
+
+def test_saved_position_pointing_to_a_vanished_chapter_does_not_count_as_started(client, library, one_series):
+    """GIVEN 2화를 읽는 중이던 웹툰(이어보기 위치가 2화를 가리킴)"""
+    sid = one_series["id"]
+    client.put(f"/api/series/{sid}/progress", json={"chapter_id": one_series["chapters"][1]["id"], "page_index": 1})
+    assert _item(client, sid)["started"] is True
+
+    """WHEN 그 회차 파일의 이름이 바뀐 뒤 재스캔하면(회차 ID는 파일명으로 만들어서, 이름이 바뀌면 ID도 바뀜 -
+    이어보기 위치와 읽음 기록은 이제 목록에 없는 옛 ID를 가리키게 된다)"""
+    series_dir = library / "naver" / "웹툰"
+    os.rename(series_dir / "002.zip", series_dir / "002 다시받음.zip")
+    client.post("/api/rescan")
+    item = _item(client, sid)
+
+    """THEN 저장된 위치가 가리키는 회차가 이제 없으므로, 읽기 시작한 웹툰으로 세지 않는다(회차 목록에
+    읽는 중 표시가 없는데 읽는 중 필터에만 걸리는 일이 없도록). 이름이 안 바뀐 1화의 읽음 기록은 그대로다."""
+    assert item["started"] is False
+    assert item["unread_count"] == 2  # 3개 중 1화만 읽음(2화를 읽는 중이면 그 앞 1화는 읽음 처리됨)
+
+
+def test_position_on_a_chapter_that_still_exists_stays_started_after_other_files_are_renamed(client, library, one_series):
+    """GIVEN 2화를 읽는 중이던 웹툰"""
+    sid = one_series["id"]
+    client.put(f"/api/series/{sid}/progress", json={"chapter_id": one_series["chapters"][1]["id"], "page_index": 1})
+
+    """WHEN 읽던 회차가 아닌 다른 회차 파일만 이름이 바뀌면"""
+    series_dir = library / "naver" / "웹툰"
+    os.rename(series_dir / "003.zip", series_dir / "003 다시받음.zip")
+    client.post("/api/rescan")
+
+    """THEN 읽던 회차는 그대로 있으니 계속 읽는 중이다"""
+    assert _item(client, sid)["started"] is True
 
 
 def test_started_is_also_reported_for_shared_profiles(library, monkeypatch):
