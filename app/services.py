@@ -248,6 +248,11 @@ def _rescan_schedule_is_plain_number(value: str) -> bool:
     return value.lstrip("-").isdigit()
 
 
+def _cron_expressions(schedule: str) -> list[str]:
+    """RESCAN_SCHEDULE을 ";"나 줄바꿈 기준으로 나눈 크론 표현식 목록(빈 항목은 버림)."""
+    return [part.strip() for part in re.split(r"[;\n]", schedule) if part.strip()]
+
+
 def is_rescan_enabled() -> bool:
     """자동 재스캔이 켜져 있는지. RESCAN_SCHEDULE이 비어있으면 RESCAN_INTERVAL_SECONDS
     기준(0 이하면 꺼짐)이고, RESCAN_SCHEDULE이 순수 숫자면 그 값 기준(역시 0 이하면
@@ -267,13 +272,17 @@ def seconds_until_next_rescan() -> float:
     숫자(예: "300")면 RESCAN_INTERVAL_SECONDS와 똑같이 "몇 초 간격"으로 해석하고,
     숫자가 아니면 크론 표현식(예: "0 3 * * *" = 매일 새벽 3시)으로 해석해서 다음
     실행 시각까지 남은 초를 돌려준다. 크론 표현식이 잘못됐으면 croniter가 예외를
-    던지는데, 이건 호출하는 쪽(auto_rescan_loop)에서 잡아서 기본 주기로 대체한다."""
+    던지는데, 이건 호출하는 쪽(auto_rescan_loop)에서 잡아서 기본 주기로 대체한다.
+
+    크론 표현식은 ";"나 줄바꿈으로 여러 개를 이어 쓸 수 있고, 그중 가장 가까운 다음 시각을
+    쓴다. 크론 한 줄은 분 필드와 시 필드가 독립적으로 곱해져서 "00:40, 03:47, 06:55"처럼
+    시각마다 분이 다른 일정은 한 줄로 못 쓰기 때문이다."""
     if not RESCAN_SCHEDULE:
         return RESCAN_INTERVAL_SECONDS
     if _rescan_schedule_is_plain_number(RESCAN_SCHEDULE):
         return int(RESCAN_SCHEDULE)
     now = datetime.now()
-    next_time = croniter(RESCAN_SCHEDULE, now).get_next(datetime)
+    next_time = min(croniter(expression, now).get_next(datetime) for expression in _cron_expressions(RESCAN_SCHEDULE))
     return max((next_time - now).total_seconds(), 1)
 
 

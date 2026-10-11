@@ -215,7 +215,8 @@ async def startup_scan():
 
     if services.is_rescan_enabled():
         if services.RESCAN_SCHEDULE and not services.RESCAN_SCHEDULE.lstrip("-").isdigit():
-            log.info(f"자동 재스캔 활성화 - 크론 일정({services.RESCAN_SCHEDULE})에 따라 실행")
+            schedule = " ; ".join(services._cron_expressions(services.RESCAN_SCHEDULE))  # 줄바꿈으로 쓴 경우도 한 줄로
+            log.info(f"자동 재스캔 활성화 - 크론 일정({schedule})에 따라 실행")
         else:
             interval = (
                 int(services.RESCAN_SCHEDULE) if services.RESCAN_SCHEDULE else services.RESCAN_INTERVAL_SECONDS
