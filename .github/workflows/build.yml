@@ -21,13 +21,15 @@ jobs:
 
   build-and-push:
     needs: test # 테스트가 통과해야만 이미지를 빌드/푸시함 (실패하면 여기서 멈춤)
-    runs-on: ubuntu-latest
+    # ubuntu-latest가 2026-10-19부터 26.04로 바뀌는 중이라 버전을 고정한다(이미지 빌드 자체는 Docker
+    # 안에서 일어나서 호스트 OS 영향이 작지만, 날마다 다른 환경에서 도는 것을 피한다).
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -38,7 +40,7 @@ jobs:
         run: echo "name=$(echo 'ghcr.io/${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
