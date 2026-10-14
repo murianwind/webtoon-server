@@ -360,9 +360,11 @@ function sortSeries(list) {
 }
 
 function seriesStatus(s) {
-  // 읽은 회차가 하나도 없어도, 이어보기 위치가 저장돼 있으면(1화를 읽는 중 등) 읽는 중이다.
-  // 회차는 그 앞 회차를 지나가야 "읽음"이 되므로, 읽음 개수만으로는 새 웹툰을 읽기 시작한 걸 알 수 없다.
-  if (s.unread_count >= s.chapter_count) return s.started ? "reading" : "unread";
+  // 지금 읽고 있는 회차가 있으면(회차 목록에 "읽는 중"으로 표시되는 회차) 읽음 기록이 얼마나 있든 읽는 중이다:
+  // 새 웹툰의 1화를 읽는 중이면 읽은 회차가 0개여도, 다 읽은 웹툰의 회차를 다시 열어 읽는 중이면 안 읽은
+  // 회차가 0개여도 읽는 중이다. 이 판단은 서버가 회차 목록과 같은 기준으로 내려준다(reading_now).
+  if (s.reading_now) return "reading";
+  if (s.unread_count >= s.chapter_count) return "unread"; // 아직 한 번도 안 읽음
   if (s.unread_count === 0) return "done"; // 전부 읽음
   return "reading"; // 일부만 읽음
 }

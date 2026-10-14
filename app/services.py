@@ -12,7 +12,7 @@ import concurrent.futures
 import logging
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from croniter import croniter
 
@@ -94,6 +94,25 @@ def resolve_read_index(chapters: list, prog: dict | None) -> int:
         if chapter["id"] == prog["chapter_id"]:
             return i
     return -1  # 저장된 회차가 더 이상 없으면(파일 삭제 등) 진행 없음으로 취급
+
+
+def reading_chapter(chapters: list, prog: dict | None) -> dict | None:
+    """지금 읽고 있는 회차(이어보기 위치가 가리키는 회차)를 돌려준다. 없으면 None.
+
+    회차 목록(사이드바)의 "읽는 중" 표시와 목록 화면의 "읽는 중" 필터가 같은 판단을 쓰도록 이 한
+    곳에서만 정한다 - 따로 판단하다가 사이드바는 "읽는 중"인데 필터에는 안 나오는 어긋남이 있었다.
+
+    "읽고 있다"로 보지 않는 경우 둘:
+      - 저장된 위치의 회차가 지금 목록에 없을 때(파일 이름이 바뀌어 옛 ID를 가리킴)
+      - 그 회차를 끝까지 읽은 상태(PAGE_FINISHED_SENTINEL)일 때. 완독 처리는 포인터가 그 회차를
+        가리킨 채로 남으므로, 이걸 걸러내지 않으면 마지막 화를 완독한 뒤에도(또는 새 화가 추가돼도)
+        완독된 회차가 계속 "읽는 중"으로 보이게 된다.
+    읽음 기록과는 무관하다: 이미 읽음 처리된 회차라도 다시 열어서 보는 중이면 "읽고 있는" 것이다.
+    """
+    index = resolve_read_index(chapters, prog)
+    if index < 0 or prog["page_index"] >= db.PAGE_FINISHED_SENTINEL:
+        return None
+    return chapters[index]
 
 
 def migrate_legacy_progress_if_needed(series_id: str, chapters: list, prog: dict | None) -> None:
@@ -286,6 +305,24 @@ def seconds_until_next_rescan() -> float:
     return max((next_time - now).total_seconds(), 1)
 
 
+def describe_next_rescan(wait_seconds: float, now: datetime | None = None) -> str:
+    """다음 자동 재스캔이 언제인지 사람이 읽기 좋은 한 줄로 만든다(로그용).
+
+    일정 간격이 몇 시간씩일 수 있어서, 이 줄이 없으면 RESCAN_SCHEDULE이 제대로 읽혔는지
+    알려면 첫 실행까지 한참 기다려야 한다."""
+    now = now or datetime.now()
+    next_time = now + timedelta(seconds=wait_seconds)
+    hours, remainder = divmod(int(wait_seconds), 3600)
+    minutes = remainder // 60
+    if hours:
+        waited = f"{hours}시간 {minutes}분"
+    elif minutes:
+        waited = f"{minutes}분"
+    else:
+        waited = "1분 미만"
+    return f"다음 자동 재스캔: {next_time:%Y-%m-%d %H:%M} ({waited} 뒤)"
+
+
 async def auto_rescan_loop() -> None:
     """RESCAN_SCHEDULE(설정했으면) 또는 RESCAN_INTERVAL_SECONDS 주기로 반복되는 자동
     재스캔 루프."""
@@ -300,6 +337,7 @@ async def auto_rescan_loop() -> None:
                 f"기본 주기({RESCAN_INTERVAL_SECONDS}초)로 대체합니다"
             )
             wait_seconds = RESCAN_INTERVAL_SECONDS
+        log.info(describe_next_rescan(wait_seconds))
         await asyncio.sleep(wait_seconds)
         try:
             old_ids = set(catalog.get_series_map().keys())

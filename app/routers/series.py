@@ -46,10 +46,17 @@ def list_series(request: Request):
         read_ids = access_control.get_read_chapter_ids(profile, series["id"])
         unread = sum(1 for chapter in chapters if chapter["id"] not in read_ids)
 
+        reading = services.reading_chapter(chapters, prog)
+
         if total == 0:
             progress_display = ""
-        elif unread == 0:
+        elif unread == 0 and reading is None:
             progress_display = "완독"
+        elif unread == 0:
+            # 전부 읽음 처리돼 있어도 한 회차를 다시 열어서 읽는 중이면, "완독"이 아니라 그 회차를 보여준다
+            # ("읽는 중" 목록에 "완독"이라고 적힌 카드가 나오면 모순이다)
+            reading_label = services.chapter_number_part(reading["label"])
+            progress_display = f"{reading_label}/{services.chapter_number_part(chapters[-1]['label'])}"
         else:
             # 아직 안 읽은 회차 중 가장 앞선 것(중간에 빠졌던 회차일 수도 있음) / 마지막 회차
             next_unread = next(chapter for chapter in chapters if chapter["id"] not in read_ids)
@@ -64,12 +71,10 @@ def list_series(request: Request):
             "chapter_count": total,
             "unread_count": unread,
             "progress_display": progress_display,
-            # 이어보기 위치가 저장돼 있고 그 회차가 지금도 있으면 읽기 시작한 웹툰이다. 읽음 처리된 회차
-            # 수(unread_count)만으로는 새 웹툰의 1화를 읽는 중인 것을 알 수 없다(회차는 그 앞 회차를 지나가야
-            # 읽음이 됨). "지금도 있으면"이 중요하다: 회차 ID는 파일명으로 만들어서, 파일 이름이 바뀌면 저장된
-            # 위치가 목록에 없는 옛 회차를 가리키게 되는데, 이걸 읽기 시작한 것으로 세면 읽음 표시도 읽는 중
-            # 표시도 없는 웹툰이 "읽는 중"으로 분류되고, 사이드바로는 되돌려지지도 않는다.
-            "started": services.resolve_read_index(chapters, prog) >= 0,
+            # 지금 읽고 있는 회차가 있는지(회차 목록에 "읽는 중"으로 표시되는 회차가 있는지). 읽음 처리된
+            # 회차 수(unread_count)만으로는 알 수 없다: 새 웹툰의 1화를 읽는 중이어도 읽은 회차는 0개이고,
+            # 전부 읽은 웹툰의 마지막 회차를 다시 열어 읽는 중이어도 안 읽은 회차는 0개다.
+            "reading_now": reading is not None,
             "latest_update": series["latest_mtime"],
             "cover_url": covers.cover_url(series, access_control.profile_path_prefix(profile)),
         }
@@ -264,17 +269,13 @@ def list_chapters(series_id: str, request: Request):
     if profile is None:
         services.migrate_legacy_progress_if_needed(series_id, chapters, prog)
     read_ids = access_control.get_read_chapter_ids(profile, series_id)
-    current_chapter_id = prog["chapter_id"] if prog else None
-    # 완독 처리(마지막 화를 끝까지 읽었을 때)는 이어보기 포인터에 PAGE_FINISHED_SENTINEL을
-    # 저장해서 "이 회차는 끝까지 다 봤다"를 표시한다. 이 값이면 포인터가 그 회차를
-    # 가리키고 있어도 "지금 읽는 중"이 아니라 "다 읽었다"는 뜻이므로, 아래에서 "읽는 중"
-    # 판단에 포함시키지 않는다 - 안 그러면 마지막 화를 완독한 뒤 새 화가 추가돼도(포인터가
-    # 아직 그 회차를 가리키고 있으니) 완독된 회차가 계속 "읽는 중"으로 잘못 보이게 된다.
-    current_is_finished_sentinel = bool(prog) and prog["page_index"] == db.PAGE_FINISHED_SENTINEL
+    # "지금 읽는 중"인 회차의 판단은 목록 화면의 읽는 중 필터와 같은 함수를 쓴다(services.reading_chapter)
+    reading = services.reading_chapter(chapters, prog)
+    reading_id = reading["id"] if reading else None
 
     chapters_out = []
     for chapter in chapters:
-        is_reading = chapter["id"] == current_chapter_id and not current_is_finished_sentinel
+        is_reading = chapter["id"] == reading_id
         # "지금 보고 있는 회차"라는 정보가 "예전에 읽었는지"보다 더 구체적이고 우선한다 -
         # 사이드바에서 이미 읽었던 회차로 다시 돌아가서 보면(예: 10화까지 읽다가 2화를
         # 다시 열어봄), 그 회차는 "읽음" 기록이 있어도 지금 보는 중이라는 게 더 중요한
