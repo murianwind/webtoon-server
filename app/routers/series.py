@@ -50,17 +50,16 @@ def list_series(request: Request):
 
         if total == 0:
             progress_display = ""
-        elif unread == 0 and reading is None:
+        elif reading is None and unread == 0:
             progress_display = "완독"
-        elif unread == 0:
-            # 전부 읽음 처리돼 있어도 한 회차를 다시 열어서 읽는 중이면, "완독"이 아니라 그 회차를 보여준다
-            # ("읽는 중" 목록에 "완독"이라고 적힌 카드가 나오면 모순이다)
-            reading_label = services.chapter_number_part(reading["label"])
-            progress_display = f"{reading_label}/{services.chapter_number_part(chapters[-1]['label'])}"
         else:
-            # 아직 안 읽은 회차 중 가장 앞선 것(중간에 빠졌던 회차일 수도 있음) / 마지막 회차
-            next_unread = next(chapter for chapter in chapters if chapter["id"] not in read_ids)
-            current_label = services.chapter_number_part(next_unread["label"])
+            # 카드에 적는 회차: 지금 읽고 있는 회차가 있으면 그 회차, 없으면 아직 안 읽은 회차 중 가장 앞선 것
+            # (중간에 빠졌던 회차일 수도 있음). 읽고 있는 회차를 우선하는 이유: 카드를 누르면 그 회차가 열리고
+            # 사이드바에도 "읽는 중"으로 표시되는데, 카드만 "안 읽은 첫 회차"를 적으면 어긋난다 - 예를 들어
+            # 8화까지 갔다가 7화로 돌아와 읽는 중이면(7화는 이미 읽음 기록에 있음) 안 읽은 첫 회차는 8화다.
+            # 전부 읽음 처리된 웹툰의 회차를 다시 열어 읽는 중일 때도 같은 규칙으로 그 회차가 적힌다.
+            current = reading or next(chapter for chapter in chapters if chapter["id"] not in read_ids)
+            current_label = services.chapter_number_part(current["label"])
             last_label = services.chapter_number_part(chapters[-1]["label"])
             progress_display = f"{current_label}/{last_label}"
 

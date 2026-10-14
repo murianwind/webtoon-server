@@ -239,3 +239,67 @@ def test_list_and_sidebar_always_agree_on_whether_something_is_being_read(client
     sidebar_shows_reading = any(ch["reading"] for ch in chapters)
 
     assert _item(client, sid)["reading_now"] is sidebar_shows_reading
+
+
+# ---------------------------------------------------------------------------
+# 카드에 적히는 회차 = 카드를 눌렀을 때 열리는 회차 = 사이드바의 "읽는 중" 회차
+#
+# 8화까지 갔다가 7화로 돌아와 읽는 경우, 8화로 넘어갈 때 7화가 이미 읽음 기록에 들어가 있어서
+# "안 읽은 첫 회차"는 8화다. 카드가 그 8화를 보여주면, 사이드바(7화 읽는 중)와도, 카드를 눌렀을 때
+# 열리는 곳(7화)과도 달라진다.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def ten_chapter_series(client, library):
+    for n in range(1, 11):
+        make_chapter_zip(str(library / "kakao" / "블루엔젤" / f"{n:03d} 블루엔젤 {n}화.zip"), page_count=5)
+    client.post("/api/rescan")
+    item = client.get("/api/series").json()[0]
+    chapters = client.get(f"/api/series/{item['id']}/chapters").json()["chapters"]
+    return {"id": item["id"], "chapters": chapters}
+
+
+def test_card_shows_the_chapter_being_read_when_returning_to_an_already_read_chapter(client, ten_chapter_series):
+    """GIVEN 8화까지 읽다가(1~7화가 읽음 처리됨) 7화로 돌아와서 다시 읽는 중인 웹툰"""
+    sid, chapters = ten_chapter_series["id"], ten_chapter_series["chapters"]
+    client.put(f"/api/series/{sid}/progress", json={"chapter_id": chapters[7]["id"], "page_index": 0})
+    client.put(f"/api/series/{sid}/progress", json={"chapter_id": chapters[6]["id"], "page_index": 1})
+
+    item = _item(client, sid)
+
+    """THEN 카드에는 사이드바에서 "읽는 중"인 7화가 보인다(안 읽은 첫 회차인 8화가 아니라)"""
+    assert item["progress_display"] == "7화/10화"
+
+
+def test_card_still_shows_the_next_unread_chapter_when_nothing_is_being_read(client, ten_chapter_series):
+    """GIVEN 7화를 끝까지 읽고 이어서 읽을 차례(지금 읽고 있는 회차는 없음)"""
+    sid, chapters = ten_chapter_series["id"], ten_chapter_series["chapters"]
+    client.put(f"/api/series/{sid}/read-state", json={"scope": "chapter", "read": True, "chapter_id": chapters[6]["id"]})
+
+    """THEN 카드에는 다음에 읽을 회차(8화)가 보인다(기존 동작 그대로)"""
+    assert _item(client, sid)["progress_display"] == "8화/10화"
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        _scenario_untouched,
+        _scenario_reading_first,
+        _scenario_reading_middle,
+        _scenario_reread_after_finishing,
+        _scenario_unread_from_middle,
+        _scenario_read_only_the_first_chapter,
+    ],
+)
+def test_card_label_matches_the_chapter_that_opens_when_the_card_is_clicked(client, one_series, scenario):
+    """GIVEN 여러 가지 읽기 상황 / THEN 카드에 적힌 회차가 카드를 눌렀을 때(이어보기) 열리는 회차와 같다"""
+    sid = one_series["id"]
+    client.put(f"/api/series/{sid}/read-state", json={"scope": "all", "read": False})
+    scenario(client, sid, one_series["chapters"])
+
+    labels = {ch["id"]: ch["label"] for ch in client.get(f"/api/series/{sid}/chapters").json()["chapters"]}
+    opens = labels[client.get(f"/api/series/{sid}/continue").json()["chapter_id"]]
+    shown = _item(client, sid)["progress_display"].split("/")[0]
+
+    assert shown == opens
