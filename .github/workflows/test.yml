@@ -23,23 +23,10 @@ concurrency:
 
 jobs:
   test:
-    name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    # experimental가 true인 항목은 실패해도 전체 결과(와 build.yml의 이미지 빌드)를 막지 않는다
-    continue-on-error: ${{ matrix.experimental }}
-    strategy:
-      fail-fast: false # 한쪽이 실패해도 다른 쪽 결과는 끝까지 확인
-      matrix:
-        include:
-          # 기준 환경: ubuntu-latest 대신 버전을 고정한다. ubuntu-latest는 2026-10-19부터 11-19까지
-          # 몇 주에 걸쳐 24.04에서 26.04로 바뀌는데, 그동안 같은 코드가 날마다 다른 환경에서 돌 수 있다.
-          - os: ubuntu-24.04
-            experimental: false
-          # 사전 점검: 26.04에서도 테스트가 통과하는지 미리 확인한다(ubuntu-latest가 바뀌기 전에 알 수
-          # 있도록). 여기서 실패해도 위 기준 환경이 통과하면 빌드는 진행된다. 한동안 계속 통과하면
-          # 기준 환경을 26.04로 옮기고 이 항목을 정리하면 된다.
-          - os: ubuntu-26.04
-            experimental: true
+    # ubuntu-latest 대신 버전을 고정한다. ubuntu-latest는 2026-10-19부터 11-19까지 몇 주에 걸쳐
+    # 24.04에서 26.04로 바뀌는데, 그동안 같은 코드가 날마다 다른 환경에서 돌 수 있다.
+    # 문제가 생기면(예: 26.04에서만 실패) 이 줄을 ubuntu-24.04로 되돌리면 된다.
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v6
