@@ -999,6 +999,8 @@ a {
   color: var(--text-dim);
   max-height: 40vh;
   overflow-y: auto;
+  overflow-x: hidden; /* overflow-y만 주면 가로도 auto가 돼서, 긴 URL 등이 있으면 좌우 스크롤이 생긴다 */
+  overflow-wrap: anywhere; /* 공백 없는 긴 문자열도 줄바꿈해서 가로로 넘치지 않게 한다 */
 }
 .series-info-row {
   margin-bottom: 4px;
