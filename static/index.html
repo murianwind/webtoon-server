@@ -505,18 +505,15 @@ function markActiveListTab() {
   }
 }
 
-// 검색했는데 지금 탭엔 결과가 없고 다른 탭에만 있으면, 그 탭이 "검색 결과가 있는 탭"이다
-function isSearchHit(list, counts, hasQuery) {
-  return list !== activeList && hasQuery && counts[activeList] === 0 && counts[list] > 0;
-}
-
 function renderListTabs(counts, hasQuery) {
   markActiveListTab();
+  const activeIsEmpty = counts[activeList] === 0;
   for (const btn of document.querySelectorAll(".list-tab")) {
     const list = btn.dataset.list;
     const badge = btn.querySelector(".list-tab-count");
     badge.textContent = counts[list];
-    badge.classList.toggle("hit", isSearchHit(list, counts, hasQuery)); // 그쪽 탭 숫자를 눈에 띄게 한다
+    // 검색했는데 지금 탭엔 결과가 없고 다른 탭에만 있으면, 그쪽 탭 숫자를 눈에 띄게 한다
+    badge.classList.toggle("hit", list !== activeList && hasQuery && activeIsEmpty && counts[list] > 0);
   }
 }
 
@@ -662,9 +659,9 @@ function initListTabs() {
 
 function setActiveList(list) {
   if (list === activeList) return;
-  // 검색 결과를 찾아 강조된 탭으로 가는 게 아니면, 이전 탭에서 하던 검색은 새 탭에 이어가지 않는다
+  // 새 탭에도 검색 결과가 있으면 검색을 이어가고, 없으면 이전 탭에서 하던 검색은 지운다
   const q = query.trim().toLowerCase();
-  if (!isSearchHit(list, countByList(q), q !== "")) storeQuery("");
+  if (q === "" || countByList(q)[list] === 0) storeQuery("");
   activeList = list;
   rememberActiveList(list);
   sortSelect.value = sortModes[activeList];
