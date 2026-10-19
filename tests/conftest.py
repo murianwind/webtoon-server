@@ -77,3 +77,4 @@ def client(library):
     """
     with TestClient(app) as c:
         yield c
+

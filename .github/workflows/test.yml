@@ -41,3 +41,10 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests/ -v
+
+      # 브라우저 테스트는 pytest-playwright가 이벤트 루프를 남겨 다른 테스트를 깨뜨리므로 따로 실행한다
+      - name: Install browser for e2e tests
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run browser (e2e) tests
+        run: python -m pytest tests/e2e -v

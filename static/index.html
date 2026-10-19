@@ -31,7 +31,10 @@
   <div class="pull-refresh-spinner"></div>
 </div>
 <div class="toolbar">
-  <input id="searchInput" class="search-input" type="text" placeholder="제목 검색">
+  <div class="search-field">
+    <input id="searchInput" class="search-input" type="text" placeholder="제목 검색">
+    <button id="searchClear" class="search-clear" type="button" aria-label="검색어 지우기" hidden>×</button>
+  </div>
   <select id="sortSelect" class="sort-select">
     <option value="latest">최근 업데이트순</option>
     <option value="unread">안읽은 회차 많은순</option>
@@ -164,11 +167,14 @@
 
 <aside id="chapterSidebar" class="sidebar">
   <div class="sidebar-header">
-    <span id="chapterSidebarTitle">회차 목록</span>
-    <button id="chapterSidebarMove" class="sidebar-move-btn" style="display:none"></button>
+    <span id="chapterSidebarTitle" class="sidebar-title">회차 목록</span>
     <button id="chapterSidebarClose" class="sidebar-close" aria-label="닫기">×</button>
   </div>
   <div id="chapterSidebarInfo" class="series-info-panel" style="display:none"></div>
+  <div id="chapterSidebarLinks" class="series-info-links">
+    <a id="chapterSidebarOrigin" class="series-info-link" target="_blank" rel="noopener" hidden>원작 페이지 열기 ↗</a>
+    <button id="chapterSidebarMove" class="series-info-link link-button" type="button" hidden></button>
+  </div>
   <div id="chapterSidebarList" class="sidebar-list"></div>
 </aside>
 <div id="chapterSidebarOverlay" class="sidebar-overlay"></div>
@@ -347,7 +353,9 @@ let selectedIds = new Set(); // 다중 선택
 
 const searchInput = document.getElementById("searchInput");
 const sortSelect = document.getElementById("sortSelect");
+const searchClear = document.getElementById("searchClear");
 searchInput.value = query;
+searchClear.hidden = query === "";
 sortSelect.value = sortModes[activeList];
 
 function sortSeries(list) {
@@ -497,15 +505,18 @@ function markActiveListTab() {
   }
 }
 
+// 검색했는데 지금 탭엔 결과가 없고 다른 탭에만 있으면, 그 탭이 "검색 결과가 있는 탭"이다
+function isSearchHit(list, counts, hasQuery) {
+  return list !== activeList && hasQuery && counts[activeList] === 0 && counts[list] > 0;
+}
+
 function renderListTabs(counts, hasQuery) {
   markActiveListTab();
-  const activeIsEmpty = counts[activeList] === 0;
   for (const btn of document.querySelectorAll(".list-tab")) {
     const list = btn.dataset.list;
     const badge = btn.querySelector(".list-tab-count");
     badge.textContent = counts[list];
-    // 검색했는데 지금 탭엔 결과가 없고 다른 탭에만 있으면, 그쪽 탭 숫자를 눈에 띄게 한다
-    badge.classList.toggle("hit", list !== activeList && hasQuery && activeIsEmpty && counts[list] > 0);
+    badge.classList.toggle("hit", isSearchHit(list, counts, hasQuery)); // 그쪽 탭 숫자를 눈에 띄게 한다
   }
 }
 
@@ -651,6 +662,9 @@ function initListTabs() {
 
 function setActiveList(list) {
   if (list === activeList) return;
+  // 검색 결과를 찾아 강조된 탭으로 가는 게 아니면, 이전 탭에서 하던 검색은 새 탭에 이어가지 않는다
+  const q = query.trim().toLowerCase();
+  if (!isSearchHit(list, countByList(q), q !== "")) storeQuery("");
   activeList = list;
   rememberActiveList(list);
   sortSelect.value = sortModes[activeList];
@@ -798,13 +812,13 @@ document.getElementById("cardMenuSelect").addEventListener("click", () => {
 function updateSidebarMoveButton(series) {
   const btn = document.getElementById("chapterSidebarMove");
   if (IS_PROFILE_VIEW) {
-    btn.style.display = "none";
+    btn.hidden = true;
     return;
   }
   const current = allSeries.find((s) => s.id === series.id) || series; // 다시 불러온 뒤의 최신 객체
   const target = otherList(listOf(current));
   btn.textContent = `${LIST_MOVE_PHRASE[target]} 이동`;
-  btn.style.display = "";
+  btn.hidden = false;
   btn.onclick = async () => {
     if (await requestMove([series.id], target)) {
       showToast(moveToastMessage(1, target));
@@ -1190,14 +1204,27 @@ function renderBrowseGrid(items) {
   }
 }
 
-searchInput.addEventListener("input", (e) => {
-  query = e.target.value;
+// 검색어 상태(저장값/입력창/✕ 표시)만 바꾼다 - 화면은 호출한 쪽이 다시 그린다
+function storeQuery(value) {
+  query = value;
   localStorage.setItem(LS_QUERY, query);
+  if (searchInput.value !== query) searchInput.value = query;
+  searchClear.hidden = query === "";
+}
+
+function setQuery(value) {
+  storeQuery(value);
   render();
   const browseGrid = document.getElementById("browseGrid");
   if (browseGrid.style.display !== "none") {
     renderBrowseGrid(filterBrowseItems(lastBrowseItems));
   }
+}
+
+searchInput.addEventListener("input", (e) => setQuery(e.target.value));
+searchClear.addEventListener("click", () => {
+  setQuery("");
+  searchInput.focus();
 });
 sortSelect.addEventListener("change", (e) => {
   sortModes[activeList] = e.target.value; // 지금 보고 있는 탭의 정렬만 바뀐다
@@ -1550,8 +1577,13 @@ function positionChapterSidebarList(chapters) {
   });
 }
 
+function setChapterSidebarTitle(title) {
+  chapterSidebarTitle.textContent = title;
+  chapterSidebarTitle.title = title; // 2줄을 넘어 말줄임된 제목도 길게 누르면/올려두면 전체가 보이게
+}
+
 async function openChapterSidebar(series) {
-  chapterSidebarTitle.textContent = series.title;
+  setChapterSidebarTitle(series.title);
   updateSidebarMoveButton(series);
   chapterSidebarList.style.display = ""; // 둘러보기 정보 화면에서 숨겨뒀을 수 있으니 복원
   chapterSidebarList.innerHTML = `<div class="picker-loading">불러오는 중...</div>`;
@@ -1618,6 +1650,7 @@ async function toggleChapterReadState(series, ch) {
 }
 
 const chapterSidebarInfo = document.getElementById("chapterSidebarInfo");
+const chapterSidebarOrigin = document.getElementById("chapterSidebarOrigin");
 
 function formatNotesRow(notes) {
   // "원작: 이우혁"처럼 "라벨: 값" 형태면 다른 항목들과 똑같이 라벨만 볼드로 표시.
@@ -1632,6 +1665,7 @@ function formatNotesRow(notes) {
 async function renderSeriesInfoPanel(seriesId) {
   chapterSidebarInfo.style.display = "none";
   chapterSidebarInfo.innerHTML = "";
+  chapterSidebarOrigin.hidden = true;
   let info;
   try {
     const res = await fetch(`/api/series/${encodeURIComponent(seriesId)}/info`);
@@ -1648,7 +1682,10 @@ async function renderSeriesInfoPanel(seriesId) {
   if (info.genre) rows.push(`<div class="series-info-row"><b>장르</b> ${info.genre}</div>`);
   if (info.age_rating) rows.push(`<div class="series-info-row"><b>연령등급</b> ${info.age_rating}</div>`);
   if (info.summary) rows.push(`<div class="series-info-summary">${info.summary.replace(/\s*\n\s*/g, " ").trim()}</div>`);
-  if (info.web_url) rows.push(`<a class="series-info-link" href="${info.web_url}" target="_blank" rel="noopener">원작 페이지 열기 ↗</a>`);
+  if (info.web_url) {
+    chapterSidebarOrigin.href = info.web_url;
+    chapterSidebarOrigin.hidden = false;
+  }
 
   if (rows.length === 0) return;
   chapterSidebarInfo.innerHTML = rows.join("");
@@ -1688,7 +1725,8 @@ let editingProfileId = null;
 function openBrowseInfoSidebar(item) {
   // 회차 목록은 시도하지 않는다 - 둘러보기 항목은 아직 허용 전이라 403이 날 것이므로,
   // 회차 목록 영역 자체를 숨겨서 info.xml 내용만 사이드바 전체에 길게 나오게 한다.
-  chapterSidebarTitle.textContent = item.title;
+  setChapterSidebarTitle(item.title);
+  document.getElementById("chapterSidebarMove").hidden = true; // 둘러보기 항목은 아직 내 목록에 없어서 옮길 수 없다
   chapterSidebarList.innerHTML = "";
   chapterSidebarList.style.display = "none";
   chapterSidebar.classList.add("open");
