@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest==8.3.3
 httpx==0.27.2
+pytest-playwright==0.10.0  # tests/e2e 브라우저 테스트용

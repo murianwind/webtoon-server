@@ -174,9 +174,34 @@ a {
   box-shadow: 0 0 0 2px var(--accent) inset;
 }
 
-.search-input {
+.search-field {
+  position: relative;
   flex: 1;
   min-width: 0;
+}
+
+.search-input {
+  width: 100%;
+  padding-right: 34px; /* ✕ 버튼이 입력한 글자를 가리지 않게 */
+}
+
+.search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.search-clear:hover {
+  color: var(--text);
 }
 
 .search-input::placeholder {
@@ -941,6 +966,20 @@ a {
   font-size: 15px;
 }
 
+.sidebar-title {
+  flex: 1;
+  min-width: 0;
+  margin-right: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  /* 제목이 길어도 2줄까지만 - 이동 링크 등 다른 요소와 높이/정렬이 흔들리지 않게 한다 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
 .sidebar-close {
   border: none;
   background: none;
@@ -975,10 +1014,31 @@ a {
   color: var(--text-dim);
 }
 .series-info-link {
-  display: inline-block;
-  margin-top: 10px;
   color: var(--accent);
   font-size: 12px;
+}
+
+/* 원작 페이지 열기 / 목록 이동 링크 - 줄거리가 길어 메타 영역이 스크롤돼도 항상 보이는 고정 행 */
+.series-info-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.series-info-links:not(:has(> :not([hidden]))) {
+  display: none; /* 보여줄 링크가 하나도 없으면 빈 행(여백/테두리)도 없앤다 */
+}
+
+/* 동작은 버튼이지만 모양은 원작 링크와 똑같이 보이게 한다 */
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  margin-left: auto; /* 원작 링크가 없어 혼자여도 항상 오른쪽 */
+  cursor: pointer;
 }
 
 .sidebar-list {
@@ -1439,20 +1499,7 @@ a {
   transform: translate(-50%, 0);
 }
 
-/* ---------- 회차 사이드바 상단 이동 버튼 / 선택 패널의 이동 버튼 ---------- */
-
-.sidebar-move-btn {
-  margin-left: auto;
-  margin-right: 12px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--accent);
-  background: none;
-  color: var(--accent);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
+/* ---------- 선택 패널의 이동 버튼 ---------- */
 
 .read-action-grid button.move-act {
   border-color: var(--accent);
