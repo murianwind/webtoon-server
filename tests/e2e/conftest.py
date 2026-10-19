@@ -15,7 +15,8 @@ from conftest import make_chapter_zip
 
 
 LONG_TITLE = "천재소녀가 무림공적을 숨김 그리고 아주 길고 긴 제목이 계속 이어져서 두 줄을 훌쩍 넘어가는 웹툰"
-LONG_SUMMARY = "무림공적을 숨긴 천재소녀의 귀엽 뽀짝 무협 모험기. " * 40
+UNBROKEN_TEXT = "https://example.com/" + "a" * 200  # 공백이 없어 줄바꿈 지점이 없는 문자열(URL 등)
+LONG_SUMMARY = "무림공적을 숨긴 천재소녀의 귀엽 뽀짝 무협 모험기. " * 40 + UNBROKEN_TEXT
 
 
 @pytest.fixture(scope="session")

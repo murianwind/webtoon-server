@@ -76,6 +76,16 @@ def test_link_row_stays_visible_while_summary_scrolls(webtoon_site, page: Page):
     assert info.locator("a").count() == 0
 
 
+def test_meta_area_never_scrolls_sideways(webtoon_site, page: Page):
+    """GIVEN 줄거리에 공백 없는 긴 문자열(URL 등)이 들어 있는 웹툰의 상세 패널"""
+    _open_panel(page, webtoon_site, LONG_TITLE)
+    info = page.locator("#chapterSidebarInfo")
+
+    """THEN 긴 문자열은 줄바꿈되어 가로 스크롤이 생기지 않는다(세로 스크롤만 있다)"""
+    assert info.evaluate("el => el.scrollWidth <= el.clientWidth")
+    assert info.evaluate("el => getComputedStyle(el).overflowX") == "hidden"
+
+
 def test_chapter_list_scrolls_separately_from_meta(webtoon_site, page: Page):
     """GIVEN 상세 패널이 열려 있을 때"""
     _open_panel(page, webtoon_site, LONG_TITLE)

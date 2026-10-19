@@ -3,8 +3,8 @@
 
 약속:
   1) 검색어가 있을 때만 필드 안에 ✕가 보이고, 누르면 검색어와 검색 결과가 초기화된다.
-  2) 탭(정주행 중 / 나중에 읽기)을 눌러 옮기면 검색이 초기화된다. 단, 지금 탭엔 결과가 없고
-     눌러 옮길 탭에만 있어서 숫자 배지가 강조된 경우(검색 결과를 찾아 가는 중)에는 유지한다.
+  2) 탭(정주행 중 / 나중에 읽기)을 눌러 옮길 때, 옮길 탭에도 검색 결과가 있으면 검색을 유지하고
+     (지금 탭엔 없고 그 탭에만 있어 숫자 배지가 강조된 경우 포함), 없으면 초기화한다.
 """
 
 import pytest
@@ -78,4 +78,18 @@ def test_switching_to_highlighted_tab_keeps_the_query(webtoon_site, page: Page):
 
     """THEN 검색이 유지되어 찾던 웹툰이 바로 보인다"""
     expect(page.locator(SEARCH)).to_have_value("묵향")
+    expect(page.locator(".card", has_text="묵향 다크레이디")).to_be_visible()
+
+
+def test_switching_tab_keeps_the_query_when_both_tabs_have_results(webtoon_site, page: Page):
+    """GIVEN 정주행 중에서 "이"를 검색 중 - 정주행 중(긴 제목)과 나중에 읽기(묵향 다크레이디) 양쪽에 결과가 있음"""
+    _visit(page, webtoon_site)
+    page.fill(SEARCH, "이")
+    expect(page.locator(".card")).to_have_count(1)
+
+    """WHEN 나중에 읽기 탭을 누르면"""
+    page.click('.list-tab[data-list="later"]')
+
+    """THEN 검색이 유지되어 그 탭의 검색 결과가 보인다"""
+    expect(page.locator(SEARCH)).to_have_value("이")
     expect(page.locator(".card", has_text="묵향 다크레이디")).to_be_visible()
