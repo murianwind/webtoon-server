@@ -330,6 +330,29 @@ docker volume create -d rclone/docker-volume-rclone:amd64 -o "remote=onedrive:�
 옵션입니다. 필요하면 `-o vfs-cache-max-size=10G`처럼 캐시 용량 상한도 같이 지정할 수
 있습니다(디스크 전체를 다 채우지 않도록).
 
+**한참 자리를 비웠다 돌아오면 다음 화가 느린 이유와 해결 옵션**
+
+rclone은 기본적으로 캐시한 파일을 **마지막으로 읽은 지 1시간(`vfs-cache-max-age`)이 지나면 캐시에서
+지우고**, 폴더 목록은 **5분(`dir-cache-time`)** 만 기억합니다. 그래서 오래 쉬었다가 이어 보면
+회차 파일을 원격에서 다시 받아와야 해서 첫 화가 느리고, 계속 보다 보면 캐시가 잡혀 빨라지는 것입니다.
+자주 보는 웹툰이 있다면 캐시를 더 오래 두면 됩니다:
+
+```
+docker volume create -d rclone/docker-volume-rclone:amd64 -o "remote=<리모트이름>:<경로>" -o vfs-cache-mode=full -o vfs-cache-max-age=168h -o vfs-cache-max-size=20G -o dir-cache-time=24h <원하는 볼륨 이름>
+```
+
+| 옵션 | rclone 기본값 | 의미 |
+|---|---|---|
+| `vfs-cache-max-age` | 1h | 마지막으로 읽은 뒤 이 시간이 지나면 캐시에서 지움 (`168h` = 7일) |
+| `vfs-cache-max-size` | 제한 없음 | 캐시 전체 용량 상한. 오래 보관하는 만큼 디스크를 쓰므로 함께 지정 권장 |
+| `dir-cache-time` | 5m | 폴더 목록을 기억하는 시간 |
+
+- 위 숫자는 예시입니다. 디스크 여유와 읽는 패턴에 맞게 조정하세요. 캐시 용량이 상한에 닿으면 오래된 것부터 지워집니다.
+- 이미 만든 볼륨의 옵션을 바꾸려면 볼륨을 지우고(`docker volume rm`) 같은 이름으로 다시 만들어야 합니다.
+- 옵션 이름과 기본값의 출처: rclone 공식 문서 [rclone mount](https://rclone.org/commands/rclone_mount/) (`VFS File Caching` / `Options` 항목).
+- 이 서버도 회차를 열면 **다음 화 파일을 미리 한 번 읽어 두어**(워밍) 다음 화로 넘어갈 때는 이미 캐시가 잡혀 있게 합니다.
+  다만 처음 여는 회차는 위 캐시 만료의 영향을 받습니다.
+
 만들어진 볼륨에 실제로 파일이 보이는지는 임시 컨테이너로 확인해보면 됩니다:
 
 ```

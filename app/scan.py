@@ -12,8 +12,10 @@ import hashlib
 import logging
 import os
 import re
+import threading
 import xml.etree.ElementTree as ET
 import zipfile
+from collections import OrderedDict
 
 from . import db
 
@@ -392,15 +394,52 @@ def iter_platform_series_streaming(platform: str):
             yield series_ref, None, None
 
 
-def list_zip_image_names(zip_path: str) -> list[str]:
-    """zip 안의 이미지 파일명을 자연 정렬 순서(1,2,3...10)로 반환."""
-    with zipfile.ZipFile(zip_path) as zf:
-        names = [
-            name
-            for name in zf.namelist()
-            if not name.endswith("/") and os.path.splitext(name)[1].lower() in IMAGE_EXTS
-        ]
+# 회차 zip의 이미지 목록 캐시. 네트워크 드라이브(rclone 등)에서는 zip을 여는 것(중앙 디렉터리 읽기)
+# 자체가 원격 읽기라, 페이지를 읽을 때마다 목록을 다시 만들면 유휴 뒤 첫 회차 열기가 매우 느려진다.
+# 키에 크기/수정시각(mtime)을 넣어서 파일이 바뀌면 자동으로 새로 읽는다. 항목은 이름 몇십 개짜리
+# 튜플이라 가볍고, 오래 안 쓴 것부터 밀려난다.
+ZIP_NAMES_CACHE_SIZE = 512
+_zip_names_cache: "OrderedDict[tuple[str, int, int], tuple[str, ...]]" = OrderedDict()
+_zip_names_lock = threading.Lock()
+
+
+def clear_zip_names_cache() -> None:
+    with _zip_names_lock:
+        _zip_names_cache.clear()
+
+
+def _image_names_in(zf: zipfile.ZipFile) -> list[str]:
+    names = [
+        name
+        for name in zf.namelist()
+        if not name.endswith("/") and os.path.splitext(name)[1].lower() in IMAGE_EXTS
+    ]
     names.sort(key=natural_key)
+    return names
+
+
+def list_zip_image_names(zip_path: str, zf: zipfile.ZipFile | None = None) -> list[str]:
+    """zip 안의 이미지 파일명을 자연 정렬 순서(1,2,3...10)로 반환. 같은 파일이면 캐시에서 준다.
+
+    zf: 호출부가 이미 이 zip을 열어 두었으면 넘긴다(캐시에 없을 때 다시 열지 않고 그 핸들로 읽는다).
+    """
+    stat = os.stat(zip_path)
+    key = (zip_path, stat.st_mtime_ns, stat.st_size)
+    with _zip_names_lock:
+        cached = _zip_names_cache.get(key)
+        if cached is not None:
+            _zip_names_cache.move_to_end(key)
+            return list(cached)
+    if zf is not None:
+        names = _image_names_in(zf)
+    else:
+        with zipfile.ZipFile(zip_path) as opened:
+            names = _image_names_in(opened)
+    with _zip_names_lock:
+        _zip_names_cache[key] = tuple(names)
+        _zip_names_cache.move_to_end(key)
+        while len(_zip_names_cache) > ZIP_NAMES_CACHE_SIZE:
+            _zip_names_cache.popitem(last=False)
     return names
 
 

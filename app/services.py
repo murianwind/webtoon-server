@@ -443,14 +443,15 @@ async def precompute_covers() -> None:
 
 
 def read_chapter_page_bytes(zip_path: str, page_index: int) -> tuple[bytes, str] | None:
-    """스레드에서 실행되는 부분: zip 목록 조회 + 실제 페이지 바이트 읽기를 한 번에 처리."""
+    """스레드에서 실행되는 부분: zip 목록 조회 + 실제 페이지 바이트 읽기를 한 번에 처리.
+    zip은 한 번만 연다 - 네트워크 드라이브에서는 여는 것 자체가 원격 읽기라 두 번 열면 그만큼 느려진다."""
     import zipfile
 
-    names = scan.list_zip_image_names(zip_path)
-    if page_index < 0 or page_index >= len(names):
-        return None
-    name = names[page_index]
-    ext = os.path.splitext(name)[1].lower()
     with zipfile.ZipFile(zip_path) as zf:
+        names = scan.list_zip_image_names(zip_path, zf)
+        if page_index < 0 or page_index >= len(names):
+            return None
+        name = names[page_index]
         data = zf.read(name)
+    ext = os.path.splitext(name)[1].lower()
     return data, covers.IMAGE_MEDIA_TYPES.get(ext, "application/octet-stream")

@@ -287,6 +287,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-bottom: none;
@@ -458,6 +459,7 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px; /* 제목(또는 제목 + 버튼 여러 개)이 버튼에 붙어 보이지 않게 */
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--bg);
@@ -465,6 +467,8 @@ a {
 }
 
 .lib-name {
+  flex: 1; /* 남는 폭을 제목이 쓰고, 버튼은 오른쪽 끝에 모인다 */
+  min-width: 0;
   font-size: 13px;
   word-break: break-all;
 }
@@ -507,6 +511,10 @@ a {
 .mark-all-btn.ghost {
   background: transparent;
   color: var(--text-dim);
+}
+/* 목록 바로 아래에 놓인 버튼(예: + 프로필 추가)이 마지막 행에 붙지 않게 */
+.lib-list + .mark-all-btn {
+  margin-top: 8px;
 }
 
 /* ---------- 시리즈 그리드 (index.html) ---------- */
@@ -961,15 +969,20 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px; /* 제목과 닫기 버튼 사이 */
   padding: calc(16px + env(safe-area-inset-top)) 16px 16px;
   border-bottom: 1px solid var(--border);
   font-size: 15px;
 }
 
+.sidebar-header > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .sidebar-title {
   flex: 1;
   min-width: 0;
-  margin-right: 12px;
   line-height: 1.4;
   overflow: hidden;
   overflow-wrap: anywhere;

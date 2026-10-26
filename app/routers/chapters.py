@@ -7,15 +7,30 @@ zip 내부 이미지(페이지 수/개별 페이지 서빙) + 회차 겹침(리�
 있었다.
 """
 
+import asyncio
 import logging
+import weakref
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
 
-from .. import access_control, catalog, db, overlap, scan, services
+from .. import access_control, catalog, db, overlap, scan, services, warmup
 
 log = logging.getLogger("webtoon-server")
 router = APIRouter()
+
+# 캐시에 없는 겹침 계산(이미지 약 25장 디코딩 + 템플릿 매칭)은 무거워서, 여러 개가 동시에 돌면 네트워크
+# 드라이브용 스레드풀을 전부 차지해 사용자의 페이지 읽기가 줄을 서게 된다. 한 번에 하나씩만 돌린다.
+# (이벤트 루프마다 따로 만든다 - 테스트처럼 루프가 여러 개 생겨도 안전하게)
+_overlap_limiters: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def _overlap_limiter() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    limiter = _overlap_limiters.get(loop)
+    if limiter is None:
+        limiter = _overlap_limiters[loop] = asyncio.Semaphore(1)
+    return limiter
 
 
 def _resolve_and_authorize(chapter_id: str, profile: dict | None):
@@ -34,9 +49,11 @@ def _resolve_and_authorize(chapter_id: str, profile: dict | None):
 @router.get("/api/chapters/{chapter_id}/pages")
 async def chapter_pages(chapter_id: str, request: Request):
     profile = access_control.get_profile(request)
-    zip_path, series, _ = _resolve_and_authorize(chapter_id, profile)
+    zip_path, series, index = _resolve_and_authorize(chapter_id, profile)
     platform = series["platform"] if series else ""
     names = await services.run_platform_io(platform, scan.list_zip_image_names, zip_path)
+    # 지금 회차를 여는 김에 다음 회차 zip도 서버가 먼저 읽어 둔다(응답을 기다리게 하지 않는 백그라운드 작업)
+    warmup.schedule_next_chapter_warmup(series, index)
     return {"page_count": len(names)}
 
 
@@ -63,8 +80,12 @@ async def chapter_overlap(chapter_id: str, request: Request):
     # 이미지 두 장의 zip을 열어 비교하는 무거운 작업 - 네트워크 드라이브면 특히 오래 걸릴
     # 수 있어 격리된 스레드풀로 넘긴다.
     platform = series["platform"]
-    skip_pages = await services.run_platform_io(platform, overlap.compute_overlap_pages, prev_chapter["path"], zip_path)
-    db.set_cached_overlap(chapter_id, prev_chapter["id"], skip_pages)
+    async with _overlap_limiter():
+        cached = db.get_cached_overlap(chapter_id)  # 줄 서서 기다리는 동안 다른 요청이 이미 계산해 뒀을 수 있다
+        if cached is not None:
+            return {"skip_pages": cached}
+        skip_pages = await services.run_platform_io(platform, overlap.compute_overlap_pages, prev_chapter["path"], zip_path)
+        db.set_cached_overlap(chapter_id, prev_chapter["id"], skip_pages)
     if skip_pages > 0:
         log.info(f"회차 겹침 감지: {chapter_id} 앞부분 {skip_pages}페이지가 이전 화와 중복 (자동 건너뜀)")
     return {"skip_pages": skip_pages}
