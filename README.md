@@ -420,6 +420,28 @@ curl "http://localhost:8000/api/lookup/latest?series=마법사랑해"
   설정하지 않았다면 `url`은 `null`로 오고, 나머지 필드(`series_id`, `chapter_id`)로
   직접 링크를 조립하면 됩니다: `<PUBLIC_BASE_URL>/reader.html?series=<series_id>&chapter=<chapter_id>&page=0`
 
+## API로 읽은 회차 번호 조회하기
+
+webtoon-manager 같은 외부 연동이 "이 시리즈에서 내가(관리자) 읽은 회차"를 알아야 할 때는
+`GET /api/lookup/read-state`를 쓰면 됩니다. `/api/lookup/latest`와 같은 방식으로 시리즈를
+찾고, 같은 이유로 비밀번호 없이 호출할 수 있으며 공유 프로필에서는 쓸 수 없습니다.
+
+```
+GET /api/lookup/read-state?series=<시리즈 폴더명>
+GET /api/lookup/read-state?series=<시리즈 폴더명>&platform=<플랫폼 폴더명>
+```
+
+```json
+{
+  "series_id": "6b6ad45fcd11",
+  "read_numbers": [1, 2, 3]
+}
+```
+
+- `read_numbers`는 회차 번호(파일명 앞의 숫자)이고, 읽음으로 표시된 회차만 담깁니다.
+  지금 읽는 중인 회차와 안 읽은 회차는 들어가지 않습니다.
+- 일치하는 시리즈가 없으면 `404`
+
 ## 라이선스
 
 MIT License — [LICENSE](./LICENSE) 참고. 이 라이선스는 이 저장소의 소스 코드에만 적용되며,

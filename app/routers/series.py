@@ -93,6 +93,17 @@ def profiles_allowed_ids(profile: dict | None) -> set[str] | None:
     return profiles_module.get_allowed_series_ids(profile["id"])
 
 
+def _find_series_by_title(series: str, platform: str | None) -> dict | None:
+    """시리즈 폴더명(과 선택적으로 플랫폼 폴더명)으로 시리즈를 찾는다. lookup 계열 API가 공유한다."""
+    for candidate in catalog.get_series_map().values():
+        if candidate["title"] != series:
+            continue
+        if platform is not None and candidate["platform"] != platform:
+            continue
+        return candidate
+    return None
+
+
 @router.get("/api/lookup/latest", dependencies=[Depends(access_control.require_admin)])
 def lookup_latest(series: str, platform: str | None = None):
     """
@@ -106,24 +117,40 @@ def lookup_latest(series: str, platform: str | None = None):
     경로라, main.py의 관리자 비밀번호 게이트에서도 예외로 빼둬야 한다(그렇지 않으면
     이 API를 쓰는 외부 연동이 전부 401로 막혀버린다).
     """
-    for candidate in catalog.get_series_map().values():
-        if candidate["title"] != series:
-            continue
-        if platform is not None and candidate["platform"] != platform:
-            continue
-        if not candidate["chapters"]:
-            raise HTTPException(404, "series has no chapters")
-        latest = candidate["chapters"][-1]
-        url = None
-        if services.PUBLIC_BASE_URL:
-            url = f"{services.PUBLIC_BASE_URL}/reader.html?series={candidate['id']}&chapter={latest['id']}&page=0"
-        return {
-            "series_id": candidate["id"],
-            "chapter_id": latest["id"],
-            "chapter_label": latest["label"],
-            "url": url,
-        }
-    raise HTTPException(404, "series not found")
+    candidate = _find_series_by_title(series, platform)
+    if candidate is None:
+        raise HTTPException(404, "series not found")
+    if not candidate["chapters"]:
+        raise HTTPException(404, "series has no chapters")
+    latest = candidate["chapters"][-1]
+    url = None
+    if services.PUBLIC_BASE_URL:
+        url = f"{services.PUBLIC_BASE_URL}/reader.html?series={candidate['id']}&chapter={latest['id']}&page=0"
+    return {
+        "series_id": candidate["id"],
+        "chapter_id": latest["id"],
+        "chapter_label": latest["label"],
+        "url": url,
+    }
+
+
+@router.get("/api/lookup/read-state", dependencies=[Depends(access_control.require_admin)])
+def lookup_read_state(series: str, request: Request, platform: str | None = None):
+    """
+    webtoon-manager 같은 외부 연동이 "이 시리즈에서 관리자가 읽은 회차"를 구하는 API(읽지 않은 회차를
+    아카이빙에서 빼는 용도). lookup/latest와 같은 방식으로 시리즈 폴더명(+선택적 platform)으로 찾고,
+    같은 이유로 관리자 전용(require_admin)이며 main.py의 관리자 비밀번호 게이트 예외 목록에 있다.
+
+    read_numbers는 회차 번호(sort_key, 파일명 앞의 숫자)다. 회차 목록과 같은 기준을 쓰므로 '읽는 중'인
+    회차는 읽음에 들어가지 않는다. 한 번호에 회차가 여러 개(분할 회차)면 전부 읽었을 때만 그 번호를 읽음으로 본다.
+    """
+    candidate = _find_series_by_title(series, platform)
+    if candidate is None:
+        raise HTTPException(404, "series not found")
+    chapters = list_chapters(candidate["id"], request)["chapters"]
+    unread_numbers = {c["sort_key"] for c in chapters if not c["read"]}
+    read_numbers = sorted({c["sort_key"] for c in chapters} - unread_numbers)
+    return {"series_id": candidate["id"], "read_numbers": read_numbers}
 
 
 @router.get("/api/series/{series_id}/continue")
