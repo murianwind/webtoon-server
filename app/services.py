@@ -12,7 +12,7 @@ import concurrent.futures
 import logging
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from croniter import croniter
 
@@ -151,7 +151,7 @@ def _advance_generator(gen):
     return next(gen, None)
 
 
-async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
+async def _scan_all_platforms_impl() -> tuple[dict, dict]:
     """
     플랫폼을 하나씩(로컬 먼저, 네트워크 드라이브는 나중에) 스캔한다. 플랫폼 안에서도
     "폴더 구조를 전부 훑고 나서 하나씩 스캔"이 아니라 "폴더 하나를 발견하는 즉시 그
@@ -213,6 +213,50 @@ async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
             catalog.prune_platform_folder_refs(platform, seen_refs)
         log.info(f"  - '{platform}' 스캔 완료 (시리즈 {len(seen_ids)}개, 폴더 발견 즉시 반영됨)")
     return catalog.get_series_map(), catalog.get_chapters_map()
+
+
+# ── 스캔은 한 번에 하나만: 진행 중에 또 요청되면(수동/자동 재스캔, 외부 연동) 그 스캔에 합류한다 ──
+# 네트워크 드라이브는 한 번 훑는 데 15~30분이 걸릴 수 있어서, 같은 폴더를 겹쳐서 훑는 것은 낭비일 뿐 아니라 서로 느리게 만든다.
+# 스캔은 별도 작업(task)으로 돌리고 요청은 그 결과를 기다리기만 한다(shield) — 요청이 끊겨도(연결 끊김 등) 스캔은 계속된다.
+_scan_task: asyncio.Task | None = None
+_scan_finished_at: str | None = None
+
+
+def is_scan_running() -> bool:
+    return _scan_task is not None and not _scan_task.done()
+
+
+def last_scan_finished_at() -> str | None:
+    """마지막 스캔이 끝난 시각(ISO, UTC). 서버가 시작한 뒤 스캔이 한 번도 끝나지 않았으면 None."""
+    return _scan_finished_at
+
+
+def _on_scan_done(task: asyncio.Task) -> None:
+    global _scan_finished_at
+    _scan_finished_at = datetime.now(timezone.utc).isoformat()
+    if not task.cancelled() and task.exception() is not None:  # 아무도 결과를 기다리지 않는 백그라운드 스캔의 오류도 흔적을 남긴다(확인하지 않은 예외 경고 방지)
+        log.error("재스캔 중 오류 발생", exc_info=task.exception())
+
+
+def _start_scan_task() -> asyncio.Task:
+    global _scan_task
+    if not is_scan_running():
+        _scan_task = asyncio.ensure_future(_scan_all_platforms_impl())
+        _scan_task.add_done_callback(_on_scan_done)
+    return _scan_task
+
+
+async def scan_all_platforms_incrementally() -> tuple[dict, dict]:
+    """라이브러리를 스캔한다(_scan_all_platforms_impl). 이미 스캔 중이면 새로 시작하지 않고 그 스캔이 끝나기를 기다려 같은 결과를 받는다."""
+    return await asyncio.shield(_start_scan_task())
+
+
+def start_background_scan() -> bool:
+    """스캔을 시작하고 기다리지 않고 돌아온다. 이미 스캔 중이면 새로 시작하지 않고 False(진행 중인 스캔이 그대로 계속된다)."""
+    if is_scan_running():
+        return False
+    _start_scan_task()
+    return True
 
 
 _global_precompute_lock = asyncio.Lock()

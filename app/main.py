@@ -38,7 +38,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import db, services
-from .routers import backup, chapters, library, series, series_lists, settings
+from .routers import backup, chapters, integration, library, series, series_lists, settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("webtoon-server")
@@ -91,7 +91,7 @@ DEVICE_COOKIE_NAME = "webtoon_device"
 
 # 비밀번호 없이 항상 통과시켜야 하는 경로 - 로그인 화면 자체와 로그인 API, 로그인
 # 화면이 그리는 데 필요한 최소한의 정적 자원, 그리고 브라우저 쿠키가 없는 외부
-# 연동(디스코드 알림 봇, webtoon-manager 등)이 호출하는 /api/lookup/latest, /api/lookup/read-state.
+# 연동(디스코드 알림 봇, webtoon-manager 등)이 호출하는 /api/lookup/latest, /api/lookup/read-state, 그리고 토큰으로 따로 인증하는 스캔 연동(/api/integration/*).
 _ADMIN_GATE_ALLOWLIST = (
     "/login.html",
     "/api/auth/login",
@@ -101,6 +101,8 @@ _ADMIN_GATE_ALLOWLIST = (
     "/style.css",
     "/api/lookup/latest",
     "/api/lookup/read-state",
+    "/api/integration/rescan",  # 토큰(INTEGRATION_TOKEN)으로 따로 인증한다 — 라우터에서 확인(routers/integration.py)
+    "/api/integration/scan-status",
 )
 
 
@@ -255,6 +257,7 @@ async def startup_scan():
 # ---------------------------------------------------------------------------
 
 app.include_router(library.router)
+app.include_router(integration.router)
 app.include_router(series.router)
 app.include_router(series_lists.router)
 app.include_router(chapters.router)

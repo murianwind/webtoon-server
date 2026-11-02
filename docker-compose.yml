@@ -36,6 +36,7 @@ services:
       #                                                   #     태그명(예: gdrive,onedrive). 이 목록에 있는 플랫폼은
       #                                                   #     항상 로컬보다 나중에 스캔됩니다.
       # - "PROFILES_ENABLED=true"                        # <-- 공유 프로필 기능(선택): 관리자 비밀번호 + 개인별 링크
+      # - "INTEGRATION_TOKEN=원하는-토큰"                  # <-- 외부 연동(webtoon-manager 등)이 다운로드 뒤에 스캔을 시킬 때 쓰는 토큰(선택, 영문/숫자/기호). 없으면 이 기능은 꺼져 있음
       # - "DISCORD_WEBHOOK_URL="                          # <-- 공유 프로필 켰을 때만(선택): 관리자 비밀번호 최초 생성 시 알림
     volumes:
       - "/path/to/your/naver-webtoons:/library/naver"    # <-- 여기 수정: 실제 웹툰 폴더 경로, 오른쪽 이름이 태그
