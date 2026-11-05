@@ -62,8 +62,9 @@ def _clean_title(text: str, strip_trailing_hash: bool = True) -> str:
         return ""
 
     text = re.sub(r"\b\d{1,2}-\d{1,2}\b", _strip_date_like, text)
-    # 장식성 특수문자 제거 (단어 사이에 있을 수 있으니 공백으로 치환 후 나중에 정리)
-    text = re.sub(r"[？！～·‧․・•●○◆■□※]", " ", text)
+    # 장식성 특수문자 제거 (단어 사이에 있을 수 있으니 공백으로 치환 후 나중에 정리).
+    # "？"/"！"는 장식이 아니라 제목의 일부일 수 있어(예: 가려 둔 제목 "？？의 왕") 남긴다.
+    text = re.sub(r"[～·‧․・•●○◆■□※]", " ", text)
     # 끝에 남은 "(숫자)"는 " 숫자"로 (예: (2) -> " 2")
     text = re.sub(r"\((\d+)\)\s*$", r" \1", text)
     text = re.sub(r"\s+", " ", text).strip(" -_")
