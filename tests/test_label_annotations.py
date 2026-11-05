@@ -47,4 +47,21 @@ def test_real_subtitle_is_joined_to_the_number_without_a_dot():
 def test_completion_inside_parens_with_subtitle_moves_marker_to_the_end():
     """GIVEN 부제 뒤 괄호 안에 완결이 함께 들어있는 회차"""
     _, label = parse_chapter_label("083 해시의 신루 83화 어디에 있느냐？ (2부 완결)", series_name="해시의 신루")
-    assert label == "83화 어디에 있느냐 (2부) 완결"
+    assert label == "83화 어디에 있느냐？ (2부) 완결"
+
+
+@pytest.mark.parametrize(
+    "stem, series, expected",
+    [
+        # 공개 전 가려 둔 제목 "？？"는 제목의 일부이므로 지우면 안 된다
+        ("481 외모지상주의 481화 ？？의 왕", "외모지상주의", "481화 ？？의 왕"),
+        ("0010_10화 ！！ 반격#5", "", "10화 ！！ 반격"),
+        ("0011_11화 정말？", "", "11화 정말？"),
+        # 물음표/느낌표가 아닌 장식 문자는 지금처럼 계속 제거한다
+        ("0012_12화 ～휴식～", "", "12화 휴식"),
+    ],
+)
+def test_question_and_exclamation_marks_are_kept_in_the_title(stem, series, expected):
+    """GIVEN 제목에 전각 "？"/"！"가 들어있는 파일명 / THEN 라벨에 그대로 남는다"""
+    _, label = parse_chapter_label(stem, series_name=series)
+    assert label == expected

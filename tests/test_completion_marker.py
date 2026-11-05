@@ -50,7 +50,7 @@ def test_completion_marker_removed_from_inside_parens_leaves_no_dangling_space()
         "083 해시의 신루 83화 어디에 있느냐？ (2부 완결)", series_name="해시의 신루"
     )
     """THEN 완결만 지워지고, 닫는 괄호 앞에 어색한 공백 없이 정리되어 끝에 "완결"이 붙는다"""
-    assert label == "83화 어디에 있느냐 (2부) 완결"
+    assert label == "83화 어디에 있느냐？ (2부) 완결"
 
 
 def test_completion_marker_alone_in_parens_removes_empty_parens():
