@@ -451,6 +451,47 @@ async def precompute_one_cover_with_timeout(series: dict) -> None:
         log.exception(f"커버 사전 생성 실패: {series['id']}")
 
 
+_refreshing_folders: set[tuple[str, str]] = set()
+
+
+async def refresh_series_folder(platform: str, series_ref: str) -> bool:
+    """시리즈 폴더 하나만 디스크에서 다시 읽어 카탈로그에 반영하고(성공하면 True), 표지 사전계산을
+    이어서 띄운다. 폴더가 없거나 zip이 없으면 아무것도 바꾸지 않고 False.
+
+    경합 처리:
+      - 같은 폴더의 갱신이 이미 진행 중이면 겹쳐서 또 읽지 않는다(제외/포함 연타 시 네트워크
+        드라이브 낭비 방지). 그 진행 중인 갱신이 결과를 반영한다.
+      - 폴더를 읽는 동안 사용자가 제외 상태를 바꿨을 수 있으므로, 반영 직전에 최신 제외 목록으로
+        excluded를 정한다. 이 판단과 반영 사이에 await가 없어 이벤트 루프 안에서 한 번에 끝난다.
+      - 전체 스캔과 겹쳐도 같은 폴더를 각자 읽은 결과를 덮어쓸 뿐이라 안전하다(회차 ID는 파일명
+        기준이라 갱신해도 읽던 위치/진행률은 그대로).
+    """
+    key = (platform, series_ref)
+    if key in _refreshing_folders:
+        return False
+    _refreshing_folders.add(key)
+    try:
+        result = await run_platform_io(platform, scan.scan_single_series, platform, series_ref)
+        if not result:
+            return False
+        series_entry, chapters_map = result
+        series_entry["excluded"] = key in db.get_excluded_series()
+        catalog.add_series(series_entry, chapters_map)
+    finally:
+        _refreshing_folders.discard(key)
+    # 전체 재스캔과 같은 전역 락을 공유해서, 그쪽 커버 생성이 진행 중일 때 겹쳐 시작되지 않게 한다
+    asyncio.create_task(_run_precompute(lambda: precompute_one_cover_with_timeout(series_entry)))
+    return True
+
+
+async def refresh_series_folder_in_background(platform: str, series_ref: str) -> None:
+    """응답을 기다리는 사람이 없는 갱신용. 실패해도 기존 카탈로그 항목은 그대로 두고 로그만 남긴다."""
+    try:
+        await refresh_series_folder(platform, series_ref)
+    except Exception:
+        log.exception(f"시리즈 폴더 백그라운드 갱신 실패(기존 정보 유지): {platform}/{series_ref}")
+
+
 async def precompute_covers() -> None:
     """
     재스캔 직후 호출되는 백그라운드 작업. 모든 시리즈의 커버를 미리 만들어서 캐시해둔다.

@@ -84,11 +84,13 @@ def exclude_series_folder(body: SeriesFolderRef):
 @router.post("/api/series-folders/include")
 async def include_series_folder(body: SeriesFolderRef):
     """
-    재포함도 전체 재스캔이 아니라, 제외의 반대 동작만 한다. 제외해도 카탈로그에는
+    재포함도 전체 재스캔이 아니라 이 폴더 하나만 다룬다. 제외해도 카탈로그에는
     회차/표지/정보가 그대로 남아있으므로(exclude_series_folder 참고), 이미 카탈로그에
-    있으면 excluded 플래그만 끄고 바로 응답한다 - 디스크(특히 네트워크 드라이브)를 다시
-    읽지 않으니 제외와 똑같이 즉시 끝나고, 응답 시점에 이미 읽을 수 있는 상태다.
-    카탈로그에 없는 경우(백업 복원 직후 등)에만 이 폴더 하나를 읽어서 더한다.
+    있으면 excluded 플래그만 끄고 바로 응답한다 - 디스크(특히 네트워크 드라이브)를 기다리지
+    않으니 제외와 똑같이 즉시 끝나고, 응답 시점에 이미 읽을 수 있는 상태다. 그 뒤에
+    이 폴더만 백그라운드로 다시 읽어서 제외된 사이에 생긴 변경(새 회차 등)을 반영한다.
+    카탈로그에 없는 경우(백업 복원 직후 등)에는 읽어서 더해야 목록에 올릴 수 있으므로
+    응답 전에 이 폴더를 읽는다.
     """
     excluded = db.get_excluded_series()
     excluded.discard((body.platform, body.series))
@@ -97,18 +99,8 @@ async def include_series_folder(body: SeriesFolderRef):
     known = catalog.get_series(scan.make_id(body.platform, body.series))
     if known:
         known["excluded"] = False
-        log.info(f"시리즈 폴더 다시 포함(카탈로그 재사용, 디스크 스캔 없음): {body.platform}/{body.series}")
-        return {"ok": True}
-
-    result = await services.run_platform_io(body.platform, scan.scan_single_series, body.platform, body.series)
-    if result:
-        series_entry, chapters_map = result
-        catalog.add_series(series_entry, chapters_map)
-        # services._run_precompute를 그대로 써서, 스캔 후 전체 사전계산(재스캔/자동
-        # 재스캔)과 같은 전역 락을 공유한다 - 그래야 "재스캔의 커버 생성이 아직
-        # 진행 중인데 이 폴더의 겹침 계산이 겹쳐서 시작"되는 것도 막힌다.
-        asyncio.create_task(
-            services._run_precompute(lambda: services.precompute_one_cover_with_timeout(series_entry))
-        )
+        asyncio.create_task(services.refresh_series_folder_in_background(body.platform, body.series))
+    else:
+        await services.refresh_series_folder(body.platform, body.series)
     log.info(f"시리즈 폴더 다시 포함: {body.platform}/{body.series}")
     return {"ok": True}

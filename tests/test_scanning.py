@@ -4,7 +4,10 @@
 """
 
 import os
+import threading
+import time
 
+from app import scan
 from conftest import make_chapter_zip
 
 
@@ -79,28 +82,158 @@ def test_included_series_reappears_without_full_rescan(client, library):
     assert [s["title"] for s in client.get("/api/series").json()] == ["웹툰A"]
 
 
-def test_reinclude_of_known_series_does_not_rescan_the_disk(client, library, monkeypatch):
-    """GIVEN 스캔을 마친 시리즈를 제외한 상태(제외해도 카탈로그에는 데이터가 남아있음)에서"""
+def _wait_until(condition, timeout=5.0):
+    """백그라운드 작업이 끝나길 기다린다(고정 sleep 대신 조건이 맞을 때까지 짧게 반복 확인)."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def _excluded_known_series(client, library):
+    """스캔을 마친 시리즈 "웹툰A"(1화)를 제외한 상태를 만들고 시리즈 id를 돌려준다."""
     from app import scan
 
     make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
     client.post("/api/rescan")
     client.post("/api/series-folders/exclude", json={"platform": "naver", "series": "웹툰A"})
+    return scan.make_id("naver", "웹툰A")
 
-    def fail_if_called(*args, **kwargs):
-        raise AssertionError("이미 카탈로그에 있는 시리즈인데 디스크를 다시 스캔했다")
 
-    monkeypatch.setattr(scan, "scan_single_series", fail_if_called)
+def _chapter_count(client, series_id):
+    return len(client.get(f"/api/series/{series_id}/chapters").json()["chapters"])
+
+
+def test_reinclude_of_known_series_responds_without_waiting_for_the_disk(client, library, monkeypatch):
+    """GIVEN 제외된 시리즈가 있고, 폴더를 다시 읽는 일이 아주 느린 상황(네트워크 드라이브)에서"""
+    from app import scan
+
+    series_id = _excluded_known_series(client, library)
+    real_scan = scan.scan_single_series
+    release = threading.Event()
+
+    def slow_scan(*args, **kwargs):
+        release.wait(timeout=10)
+        return real_scan(*args, **kwargs)
+
+    monkeypatch.setattr(scan, "scan_single_series", slow_scan)
+
+    """WHEN 다시 포함시키면"""
+    started = time.monotonic()
+    r = client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
+    elapsed = time.monotonic() - started
+
+    """THEN 디스크 읽기를 기다리지 않고 바로 응답하고, 그 시점에 이미 목록에 있고 읽을 수 있다"""
+    release.set()
+    assert r.status_code == 200
+    assert elapsed < 2
+    assert [s["title"] for s in client.get("/api/series").json()] == ["웹툰A"]
+    assert _chapter_count(client, series_id) == 1
+
+
+def test_reinclude_refreshes_the_folder_in_the_background(client, library):
+    """GIVEN 제외된 사이에 폴더에 새 회차가 생겼을 때"""
+    series_id = _excluded_known_series(client, library)
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "002.zip"))
+
+    """WHEN 다시 포함시키면"""
+    client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
+
+    """THEN 곧 백그라운드 갱신으로 새 회차가 반영된다"""
+    assert _wait_until(lambda: _chapter_count(client, series_id) == 2)
+
+
+def test_background_refresh_does_not_unhide_a_series_excluded_again_meanwhile(client, library, monkeypatch):
+    """GIVEN 다시 포함한 직후 백그라운드 갱신이 진행되는 중에"""
+    from app import db, scan
+
+    _excluded_known_series(client, library)
+    real_scan = scan.scan_single_series
+
+    def scan_then_user_excludes_again(*args, **kwargs):
+        result = real_scan(*args, **kwargs)
+        db.set_excluded_series({("naver", "웹툰A")})  # 갱신 도중 사용자가 다시 제외함
+        return result
+
+    monkeypatch.setattr(scan, "scan_single_series", scan_then_user_excludes_again)
+
+    """WHEN 갱신이 끝나면"""
+    client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
+    assert _wait_until(lambda: db.get_excluded_series() == {("naver", "웹툰A")})
+    time.sleep(0.3)  # 갱신 결과가 카탈로그에 반영될 시간
+
+    """THEN 갱신 결과가 사용자의 최신 선택(제외)을 덮어써서 다시 나타나면 안 된다"""
+    assert client.get("/api/series").json() == []
+
+
+def test_background_refresh_failure_keeps_the_existing_series_readable(client, library, monkeypatch):
+    """GIVEN 다시 포함한 뒤 백그라운드 갱신이 오류로 실패하는 상황(마운트 끊김 등)에서"""
+    from app import scan
+
+    series_id = _excluded_known_series(client, library)
+
+    def broken_scan(*args, **kwargs):
+        raise OSError("mount lost")
+
+    monkeypatch.setattr(scan, "scan_single_series", broken_scan)
 
     """WHEN 다시 포함시키면"""
     r = client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
-    assert r.status_code == 200
+    time.sleep(0.3)
 
-    """THEN 디스크를 읽지 않고도(=네트워크 드라이브여도 즉시) 목록에 다시 뜨고, 바로 읽을 수 있다"""
-    series = client.get("/api/series").json()
-    assert [s["title"] for s in series] == ["웹툰A"]
-    chapters = client.get(f"/api/series/{series[0]['id']}/chapters").json()["chapters"]
-    assert len(chapters) == 1
+    """THEN 응답은 성공이고, 기존 카탈로그 항목은 그대로 목록에 있고 읽을 수 있다"""
+    assert r.status_code == 200
+    assert [s["title"] for s in client.get("/api/series").json()] == ["웹툰A"]
+    assert _chapter_count(client, series_id) == 1
+
+
+def test_repeated_reinclude_runs_only_one_refresh_at_a_time(client, library, monkeypatch):
+    """GIVEN 제외/포함을 연타하는 상황에서 폴더 읽기가 느릴 때"""
+    from app import scan
+
+    _excluded_known_series(client, library)
+    real_scan = scan.scan_single_series
+    release = threading.Event()
+    calls = []
+
+    def slow_scan(*args, **kwargs):
+        calls.append(1)
+        release.wait(timeout=10)
+        return real_scan(*args, **kwargs)
+
+    monkeypatch.setattr(scan, "scan_single_series", slow_scan)
+    body = {"platform": "naver", "series": "웹툰A"}
+
+    """WHEN 갱신이 끝나기 전에 제외/포함을 반복하면"""
+    client.post("/api/series-folders/include", json=body)
+    client.post("/api/series-folders/exclude", json=body)
+    client.post("/api/series-folders/include", json=body)
+    release.set()
+    time.sleep(0.3)
+
+    """THEN 같은 폴더를 겹쳐서 여러 번 읽지 않는다(네트워크 드라이브 낭비 방지)"""
+    assert len(calls) == 1
+
+
+def test_full_scan_uses_the_latest_exclusion_not_a_stale_snapshot(client, library):
+    """GIVEN 플랫폼을 훑는 도중(네트워크 드라이브는 수십 분)에"""
+    from app import db
+
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
+    make_chapter_zip(str(library / "naver" / "웹툰B" / "001.zip"))
+    db.set_excluded_series({("naver", "웹툰A")})
+    gen = scan.iter_platform_series_streaming("naver")
+    first_ref, first_entry, _ = next(gen)
+    assert (first_ref, first_entry["excluded"]) == ("웹툰A", True)
+
+    """WHEN 사용자가 B를 제외하고 A를 다시 포함시킨 뒤 스캔이 이어지면"""
+    db.set_excluded_series({("naver", "웹툰B")})
+    second_ref, second_entry, _ = next(gen)
+
+    """THEN 스캔 시작 때의 낡은 목록이 아니라 최신 제외 목록이 반영된다"""
+    assert (second_ref, second_entry["excluded"]) == ("웹툰B", True)
 
 
 def test_reinclude_of_unknown_series_still_scans_the_folder(client, library):
