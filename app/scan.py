@@ -378,7 +378,6 @@ def iter_platform_series_streaming(platform: str):
     platform_path = os.path.join(LIBRARY_ROOT, platform)
     if not os.path.isdir(platform_path):
         return
-    excluded = db.get_excluded_series()
     for dirpath, dirnames, filenames in os.walk(platform_path):
         dirnames.sort()
         has_archive = any(os.path.splitext(f.lower())[1] in ARCHIVE_EXTS for f in filenames)
@@ -389,7 +388,9 @@ def iter_platform_series_streaming(platform: str):
         result = _scan_series_at_path(platform, series_ref, dirpath)
         if result:
             series_entry, chapters_map = result
-            series_entry["excluded"] = (platform, series_ref) in excluded
+            # 제외 목록은 폴더마다 최신 값을 읽는다. 시작할 때 한 번만 읽으면 네트워크 드라이브처럼
+            # 스캔이 수십 분 걸릴 때, 그 사이 사용자가 바꾼 제외/포함을 스캔이 낡은 값으로 덮어쓴다.
+            series_entry["excluded"] = (platform, series_ref) in db.get_excluded_series()
             yield series_ref, series_entry, chapters_map
         else:
             yield series_ref, None, None
