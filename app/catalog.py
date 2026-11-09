@@ -84,9 +84,19 @@ def remove_series(series_id: str) -> None:
 
 
 def add_series(series_entry: dict, chapters_map: dict) -> None:
-    """시리즈 하나를 카탈로그에 즉시 추가한다(포함/신규 스캔 시 - 전체 재스캔 없이 바로 반영)."""
+    """시리즈 하나를 카탈로그에 즉시 추가한다(포함/신규 스캔 시 - 전체 재스캔 없이 바로 반영).
+
+    같은 시리즈가 이미 있으면 교체하는데, 이전 항목에만 있던 회차는 조회표에서 뺀다. 안 그러면
+    폴더에서 삭제된 회차의 ID가 조회표에 계속 남아서, 옛 링크로 접근할 때 "없음"(404)이 아니라
+    존재하지 않는 zip을 열다가 서버 오류가 난다. 새로 넣은 뒤 "새 목록에 없는 옛 ID"만 빼므로,
+    그대로 남는 회차는 갱신 도중 스레드풀의 다른 요청에게도 한순간도 사라져 보이지 않는다."""
+    previous = _state["series"].get(series_entry["id"])
     _state["series"][series_entry["id"]] = series_entry
     _state["chapters"].update(chapters_map)
+    if previous:
+        for chapter in previous["chapters"]:
+            if chapter["id"] not in chapters_map:
+                _state["chapters"].pop(chapter["id"], None)
     _state["last_scan_at"] = datetime.now()
 
 
