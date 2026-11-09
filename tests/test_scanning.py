@@ -367,3 +367,51 @@ def test_reading_progress_survives_exclude_then_reinclude(client, library):
     after = client.get(f"/api/series/{series_id}/continue").json()
     assert after["chapter_id"] == first_chapter_id
     assert after["page_index"] == 1
+
+
+def test_deleted_chapter_is_gone_after_rescan_and_returns_not_found(client, library):
+    """GIVEN 회차가 2개인 시리즈를 스캔했고, 그 중 2화의 ID를 알고 있을 때(열어둔 리더 탭/북마크)"""
+    import os
+
+    from app import scan
+
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "002.zip"))
+    client.post("/api/rescan")
+    series_id = scan.make_id("naver", "웹툰A")
+    chapters = client.get(f"/api/series/{series_id}/chapters").json()["chapters"]
+    deleted_chapter_id = chapters[1]["id"]
+    assert client.get(f"/api/chapters/{deleted_chapter_id}/pages").status_code == 200
+
+    """WHEN 2화 zip이 폴더에서 삭제된 뒤 재스캔하면"""
+    os.remove(str(library / "naver" / "웹툰A" / "002.zip"))
+    client.post("/api/rescan")
+
+    """THEN 회차 목록에서 빠질 뿐 아니라, 옛 ID로 접근해도 서버 오류가 아니라 "없음"(404)으로 응답한다"""
+    remaining = client.get(f"/api/series/{series_id}/chapters").json()["chapters"]
+    assert [c["id"] for c in remaining] == [chapters[0]["id"]]
+    assert client.get(f"/api/chapters/{deleted_chapter_id}/pages").status_code == 404
+
+
+def test_refreshing_one_series_drops_its_deleted_chapters_but_keeps_other_series(client, library):
+    """GIVEN 시리즈 두 개가 스캔되어 있을 때"""
+    import os
+
+    from app import catalog, scan
+
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "002.zip"))
+    make_chapter_zip(str(library / "naver" / "웹툰B" / "001.zip"))
+    client.post("/api/rescan")
+    before = catalog.get_chapters_map()
+    assert len(before) == 3
+
+    """WHEN 웹툰A의 한 회차가 삭제되고 그 폴더만 다시 읽어 반영하면(폴더 단위 갱신)"""
+    os.remove(str(library / "naver" / "웹툰A" / "002.zip"))
+    series_entry, chapters_map = scan.scan_single_series("naver", "웹툰A")
+    catalog.add_series(series_entry, chapters_map)
+
+    """THEN 웹툰A의 삭제된 회차만 조회표에서 빠지고, 웹툰B의 회차는 그대로 남는다"""
+    after = catalog.get_chapters_map()
+    assert len(after) == 2
+    assert set(after) < set(before)
