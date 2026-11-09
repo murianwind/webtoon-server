@@ -79,6 +79,47 @@ def test_included_series_reappears_without_full_rescan(client, library):
     assert [s["title"] for s in client.get("/api/series").json()] == ["웹툰A"]
 
 
+def test_reinclude_of_known_series_does_not_rescan_the_disk(client, library, monkeypatch):
+    """GIVEN 스캔을 마친 시리즈를 제외한 상태(제외해도 카탈로그에는 데이터가 남아있음)에서"""
+    from app import scan
+
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
+    client.post("/api/rescan")
+    client.post("/api/series-folders/exclude", json={"platform": "naver", "series": "웹툰A"})
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("이미 카탈로그에 있는 시리즈인데 디스크를 다시 스캔했다")
+
+    monkeypatch.setattr(scan, "scan_single_series", fail_if_called)
+
+    """WHEN 다시 포함시키면"""
+    r = client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
+    assert r.status_code == 200
+
+    """THEN 디스크를 읽지 않고도(=네트워크 드라이브여도 즉시) 목록에 다시 뜨고, 바로 읽을 수 있다"""
+    series = client.get("/api/series").json()
+    assert [s["title"] for s in series] == ["웹툰A"]
+    chapters = client.get(f"/api/series/{series[0]['id']}/chapters").json()["chapters"]
+    assert len(chapters) == 1
+
+
+def test_reinclude_of_unknown_series_still_scans_the_folder(client, library):
+    """GIVEN 카탈로그에는 없지만 디스크에는 있는 폴더(예: 백업 복원 직후)가 제외 목록에 있을 때"""
+    from app import catalog, scan
+
+    make_chapter_zip(str(library / "naver" / "웹툰A" / "001.zip"))
+    client.post("/api/rescan")  # 시작 시 백그라운드 초기 스캔과 겹쳐도 결과가 같도록 먼저 확정
+    client.post("/api/series-folders/exclude", json={"platform": "naver", "series": "웹툰A"})
+    catalog.remove_series(scan.make_id("naver", "웹툰A"))
+    assert client.get("/api/series").json() == []
+
+    """WHEN 다시 포함시키면"""
+    client.post("/api/series-folders/include", json={"platform": "naver", "series": "웹툰A"})
+
+    """THEN 카탈로그에 없으므로 이 경우에만 폴더를 읽어서 목록에 더한다"""
+    assert [s["title"] for s in client.get("/api/series").json()] == ["웹툰A"]
+
+
 def test_path_traversal_in_include_is_blocked(client, library):
     """GIVEN 라이브러리 폴더 밖에 zip이 있는 폴더가 있을 때(공격 대상)"""
     outside_dir = library.parent / "outside_secret" / "무언가"

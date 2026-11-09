@@ -83,10 +83,22 @@ def exclude_series_folder(body: SeriesFolderRef):
 
 @router.post("/api/series-folders/include")
 async def include_series_folder(body: SeriesFolderRef):
-    """재포함도 전체 재스캔이 아니라 이 폴더 하나만 다시 읽어서 카탈로그에 더한다."""
+    """
+    재포함도 전체 재스캔이 아니라, 제외의 반대 동작만 한다. 제외해도 카탈로그에는
+    회차/표지/정보가 그대로 남아있으므로(exclude_series_folder 참고), 이미 카탈로그에
+    있으면 excluded 플래그만 끄고 바로 응답한다 - 디스크(특히 네트워크 드라이브)를 다시
+    읽지 않으니 제외와 똑같이 즉시 끝나고, 응답 시점에 이미 읽을 수 있는 상태다.
+    카탈로그에 없는 경우(백업 복원 직후 등)에만 이 폴더 하나를 읽어서 더한다.
+    """
     excluded = db.get_excluded_series()
     excluded.discard((body.platform, body.series))
     db.set_excluded_series(excluded)
+
+    known = catalog.get_series(scan.make_id(body.platform, body.series))
+    if known:
+        known["excluded"] = False
+        log.info(f"시리즈 폴더 다시 포함(카탈로그 재사용, 디스크 스캔 없음): {body.platform}/{body.series}")
+        return {"ok": True}
 
     result = await services.run_platform_io(body.platform, scan.scan_single_series, body.platform, body.series)
     if result:
